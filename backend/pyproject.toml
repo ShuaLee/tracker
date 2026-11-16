@@ -1,0 +1,30 @@
+[project]
+name = "portfolio-dashboard-backend"
+version = "0.1.0"
+description = "Portfolio Dashboard backend (Django + DRF)"
+requires-python = ">=3.12"
+dependencies = [
+    # Framework (5.2 is the current LTS, supported to April 2028)
+    "django>=5.2,<5.3",
+    "djangorestframework>=3.18.3",
+    # B1 - accounts and protections
+    "argon2-cffi>=25.1.0",          # Argon2 password hashing
+    "django-axes>=9.0.0",           # lockout after repeated failed logins
+    "django-cors-headers>=4.9.0",   # CORS for the React SPA origin
+    "django-environ>=0.14.0",       # SECRET_KEY, DEBUG, FMP_API_KEY etc. from .env
+    # B3 - market data
+    "requests>=2.34.2",             # FMP HTTP client
+    # B8 - API docs
+    "drf-spectacular>=0.30.0",
+]
+
+[dependency-groups]
+dev = [
+    # uv lives in the project venv rather than being installed globally.
+    # It must stay listed here, or `uv sync` would uninstall it.
+    "uv>=0.13.8",
+]
+
+[tool.uv]
+# This is an application, not a library: nothing to build or install.
+package = false
