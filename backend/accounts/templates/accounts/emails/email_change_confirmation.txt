@@ -1,0 +1,9 @@
+{% autoescape off %}Hi,
+
+Confirm this address as your new login email by visiting the link below:
+
+{{ confirm_url }}
+
+This link expires in about an hour. Your email won't change until you
+confirm it. If you didn't request this, you can ignore this message.
+{% endautoescape %}

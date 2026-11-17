@@ -1,0 +1,7 @@
+{% autoescape off %}Hi,
+
+The login email on this account was just changed to {{ new_email }}.
+
+If you made this change, no action is needed. If you didn't, your account
+may be compromised - reset your password immediately and contact support.
+{% endautoescape %}

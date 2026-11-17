@@ -12,10 +12,40 @@ cd backend
 python -m venv .venv
 .venv\Scripts\python -m pip install uv
 .venv\Scripts\uv sync
+copy .env.example .env
+# then edit .env - at minimum, generate a DJANGO_SECRET_KEY:
+.venv\Scripts\python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+.venv\Scripts\python manage.py migrate
+.venv\Scripts\python manage.py createsuperuser
 .venv\Scripts\python manage.py check
 ```
 
-Do not run `migrate` until the custom user model from step B1 exists (see PLAN.md, B1.1).
+`backend/.env` is gitignored - every checkout needs its own.
+
+## Settings
+
+`config/settings/` is a package, not a single file:
+
+- `base.py` - everything shared; reads secrets/config from `backend/.env` via
+  `django-environ` (see `.env.example` for every variable it reads).
+- `dev.py` - local development. This is the **default** (`manage.py`, `wsgi.py` and
+  `asgi.py` all fall back to `config.settings.dev` if `DJANGO_SETTINGS_MODULE` isn't set).
+- `prod.py` - a real deployment must set `DJANGO_SETTINGS_MODULE=config.settings.prod`
+  explicitly; nothing defaults to it.
+
+```powershell
+# Check a settings module without running it:
+.venv\Scripts\python manage.py check --settings=config.settings.dev
+.venv\Scripts\python manage.py check --deploy --settings=config.settings.prod
+```
+
+## Tests
+
+```powershell
+.venv\Scripts\python manage.py test          # everything, including the top-level
+                                              # dependency-rule check in backend/tests/
+.venv\Scripts\python manage.py test accounts # just the accounts app
+```
 
 ## Dependencies
 
