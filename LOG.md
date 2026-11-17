@@ -32,8 +32,10 @@ What happened, why, and anything the next session needs to know.
 
 ## Current state
 
-- **Plan version:** v2 (backend first). Django admin is the working interface; the React
-  frontend is frozen and not yet in this repo.
+- **Plan version:** v2 (backend first). Django admin is the working interface; PLAN.md's
+  real Part 2 frontend (grid layout, charts, the Targets screen) is still frozen and not
+  started. A separate, minimal `frontend/` now exists purely to exercise the `accounts`
+  API by hand - see the 2026-11-17 "frontend scaffold" entry. Don't confuse the two.
 - **Current step:** B1 (`accounts`: custom user model, auth endpoints, protections,
   user admin) — **done**, committed as `8b51bcd`. See the 2026-11-17 entry below.
 - **What exists:** `config/settings/` split into `base.py`/`dev.py`/`prod.py`; a full
@@ -48,7 +50,9 @@ What happened, why, and anything the next session needs to know.
   signal inside `accounts` would violate that rule. It belongs in `holdings` (a receiver
   on `User` via `get_user_model()`) once step B2 adds that app.
 - **Next action:** step B2 — `holdings` app: `Portfolio`, `PortfolioAccess` roles/scoping,
-  and the deferred default-portfolio-on-signup receiver described above.
+  and the deferred default-portfolio-on-signup receiver described above. The frontend
+  scaffold (below) was a side excursion for manual testing, not part of the backend
+  build order - it doesn't block or get blocked by B2.
 
 ### Machine / environment notes
 
@@ -145,3 +149,32 @@ guessed) to get the lockout-parameter syntax and username-resolution right.
 
 **Deliberately deferred:** see "Current state" above re: the default-Portfolio-on-signup
 signal, which belongs in `holdings`, not here.
+
+### 2026-11-17 — Minimal frontend scaffold, for testing `accounts` only
+**Machine:** `engineer` (`C:\Users\engineer\Desktop\tracker`) · **Commit:** uncommitted
+
+Added `frontend/` (Vite 8 + React 19, Node 22.17 - matches PLAN.md's stack). This is
+**not** PLAN.md Part 2's real frontend - it's a bare, intentionally unstyled harness with
+exactly two screens (login; settings+logout) so the `accounts` API can be exercised by
+hand instead of only through `curl`/admin. `src/App.jsx` checks `/api/auth/me/` on load
+and switches between `LoginScreen`/`SettingsScreen` accordingly.
+
+Deliberately did **not** install `react-grid-layout`, `recharts`, `lucide-react`, or
+bundle the Inter font yet - those belong to the widget-grid/Targets screens (PLAN.md
+§2.3), which don't exist. Add them when those screens are actually built, not before.
+
+`src/api.js` handles Django's session-cookie + CSRF-header auth: GET `/api/auth/csrf/`
+once on load to set the `csrftoken` cookie, then every unsafe request reads that cookie
+fresh via `document.cookie` and sends it as `X-CSRFToken`. Worth remembering if this
+breaks: `django.contrib.auth.login()` **rotates the CSRF token** on success (anti-fixation) -
+a client must re-read the cookie after login, not reuse the pre-login value. Verified the
+full login → authenticated PATCH → logout → rejected sequence end-to-end with curl against
+both dev servers running together, not just that the frontend compiles.
+
+`npm install` flags a high-severity `picomatch` advisory (transitive, via Vite's dev-time
+glob handling). Left it - no production exposure, and the suggested fix downgrades
+Vite 8→6. Revisit if `npm audit` still flags it once Vite's own dependency updates.
+
+Vite's dev server binds to `localhost` (IPv6 `::1` on this machine), not `127.0.0.1` -
+use `http://localhost:5173`, which is also the exact origin backend/.env's
+`CORS_ALLOWED_ORIGINS`/`CSRF_TRUSTED_ORIGINS`/`FRONTEND_URL` already expect.
