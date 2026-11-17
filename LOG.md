@@ -35,7 +35,7 @@ What happened, why, and anything the next session needs to know.
 - **Plan version:** v2 (backend first). Django admin is the working interface; the React
   frontend is frozen and not yet in this repo.
 - **Current step:** B1 (`accounts`: custom user model, auth endpoints, protections,
-  user admin) — **built and tested, not yet committed**. See the 2026-11-17 entry below.
+  user admin) — **done**, committed as `8b51bcd`. See the 2026-11-17 entry below.
 - **What exists:** `config/settings/` split into `base.py`/`dev.py`/`prod.py`; a full
   `accounts` app (custom `User`/`Profile`/`SecurityEvent` models, every `/api/auth/`
   endpoint from PLAN.md §1.3, django-axes lockout, DRF throttling, a polished admin);
@@ -101,7 +101,7 @@ Left the plan unedited rather than quietly changing it; the correct path per mac
 in the table above.
 
 ### 2026-11-17 — Step B1 (`accounts`) built in full
-**Machine:** `engineer` (`C:\Users\engineer\Desktop\tracker`) · **Commit:** uncommitted
+**Machine:** `engineer` (`C:\Users\engineer\Desktop\tracker`) · **Commit:** `8b51bcd`
 
 Built all four parts of PLAN.md §1.3 B1, not just models+admin — confirmed with the user
 up front that "good to go from the start" meant the whole step, matching its own "done
