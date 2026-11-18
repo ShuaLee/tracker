@@ -55,7 +55,6 @@ class ProfileSignalTests(TestCase):
     def test_profile_created_automatically(self):
         user = User.objects.create_user(email="a@example.com", password=STRONG_PASSWORD)
         self.assertTrue(Profile.objects.filter(pk=user.pk).exists())
-        self.assertEqual(user.profile.role, Profile.Role.INDIVIDUAL)
         self.assertEqual(user.profile.base_currency, Profile.Currency.CAD)
 
     def test_two_admin_created_users_each_get_their_own_profile(self):

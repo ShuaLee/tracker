@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from .models import Profile, SecurityEvent
+from .tiers import tier_for
 from .validation import validate_user_password
 
 User = get_user_model()
@@ -17,20 +18,22 @@ class ProfileSerializer(serializers.ModelSerializer):
     # ModelSerializer picks up automatically.
     class Meta:
         model = Profile
-        fields = ["display_name", "base_currency", "timezone", "role"]
-        # Staff set role in admin (see Profile.role) - a PATCH including it
-        # is accepted but the value is ignored, like email on MeSerializer.
-        read_only_fields = ["role"]
+        fields = ["display_name", "base_currency", "timezone"]
 
 
 class MeSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer()
     is_email_verified = serializers.BooleanField(read_only=True)
+    # Read-only: staff set tiers (later, billing does). See accounts/tiers.py.
+    tier = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ["email", "is_email_verified", "date_joined", "profile"]
+        fields = ["email", "is_email_verified", "date_joined", "tier", "profile"]
         read_only_fields = ["email", "is_email_verified", "date_joined"]
+
+    def get_tier(self, user):
+        return tier_for(user)
 
     def update(self, instance, validated_data):
         # Only Profile fields are ever writable here - email isn't changed

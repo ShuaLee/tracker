@@ -32,39 +32,45 @@ What happened, why, and anything the next session needs to know.
 
 ## Current state
 
-- **Plan version:** v2 (backend first). Django admin is the working interface; PLAN.md's
-  real Part 2 frontend (grid layout, charts, the Targets screen) is still frozen and not
-  started. A separate, minimal `frontend/` now exists purely to exercise the `accounts`
-  API by hand - see the 2026-11-17 "frontend scaffold" entry. Don't confuse the two.
-- **Current step:** B1 (`accounts`: custom user model, auth endpoints, protections,
-  user admin) — **done**, committed as `8b51bcd`. See the 2026-11-17 entry below.
-- **What exists:** `config/settings/` split into `base.py`/`dev.py`/`prod.py`; a full
-  `accounts` app (custom `User`/`Profile`/`SecurityEvent` models, every `/api/auth/`
-  endpoint from PLAN.md §1.3, django-axes lockout, DRF throttling, a polished admin);
-  53 passing tests plus a project-wide import-dependency-rule test. `manage.py migrate`
-  has been run against the dev SQLite DB and a superuser exists there
-  (`joshgrein2@gmail.com` — change that password before relying on it for anything real).
-  **The dev DB is per-machine** (not committed): the `Josh` machine has its own, seeded
-  2026-11-17 — see that day's "second machine" entry.
-- **Frontend harness** now covers every B1 flow (register, verify, login, forgot/reset,
-  change password/email, deactivate, log out everywhere, security activity), which
-  satisfies PLAN.md §2.2's B1 row.
-- **User/profile layer is complete** as of 2026-11-17 (see that day's last entry). The
-  only B1.5 items still open need `holdings`: default portfolio + owner access row on
-  signup, and `seed_demo --user`.
-- **Explicitly deferred (not forgotten):** B1.1's "sign-up creates a default Portfolio +
-  owner PortfolioAccess row" is NOT implemented. `holdings` doesn't exist yet, and
-  PLAN.md §1.1 says `accounts` must import nothing else in the project — building that
-  signal inside `accounts` would violate that rule. It belongs in `holdings` (a receiver
-  on `User` via `get_user_model()`) once step B2 adds that app.
-- **Next action:** step B2 — `holdings` app: `Portfolio`, `PortfolioAccess` roles/scoping,
-  and the deferred default-portfolio-on-signup receiver described above. The frontend
-  scaffold (below) was a side excursion for manual testing, not part of the backend
-  build order - it doesn't block or get blocked by B2.
-  **There is no v1 code.** PLAN.md §1.12/§2.1 described `holdings`/`layouts`/a full React
-  app as "existing" - confirmed with the user 2026-11-17 that none of it was ever built;
-  both sections are now marked as design only. Everything is built outward from
-  users/profiles, so B2 creates `holdings` from nothing.
+*(Rewritten 2026-11-17 at the end of the `Josh`-machine session; the entries below
+record how it got here.)*
+
+- **Plan version:** v2 (backend first). Django admin is the working interface. PLAN.md's
+  real Part 2 frontend (grid layout, charts, Targets screen) is not started. `frontend/`
+  is a separate, deliberately unstyled **test harness** for exercising the API by hand -
+  don't confuse the two.
+- **There is no v1 code.** PLAN.md §1.12 / §2.1 describe a v1 `holdings` / `layouts` /
+  React app as design only - none of it was ever built. Everything is built outward from
+  users/profiles.
+- **Product shape: individuals only.** Every user has exactly **one portfolio**, created
+  at signup. No advisors, clients or `Profile.role` - explored and removed this session;
+  advisors and organizations are future ideas (PLAN.md B9 / B10).
+- **Branch:** all of this session's work is on `accounts-complete-and-holdings` (not yet
+  merged into `main` or pushed). Merge/fast-forward `main` when ready.
+- **Done:**
+  - **B1 `accounts`** - complete: custom `User`/`Profile`/`SecurityEvent`, every
+    `/api/auth/` endpoint (incl. `logout-all/`, `security-events/`, `options/`),
+    timezone validation, axes lockout, DRF throttling, admin with session-ending
+    deactivate, `seed_users`.
+  - **B1a tiers** (PLAN.md §1.3a) - structure only: `accounts.Subscription` (`free` |
+    `paid`, staff-set), limits table in `accounts/tiers.py` - **nothing gated yet**.
+  - **B2 `holdings`** - `Portfolio` + `PortfolioAccess` (owner/manager/viewer, only owner
+    rows exist), one access module (`holdings/access.py`), `/api/portfolios/`
+    (list / retrieve / PATCH), signup creates the portfolio.
+  - **Harness** covers every auth flow, settings, security activity, plan display, and
+    a Portfolio tab (rename / currency).
+  - 123 tests pass (accounts, holdings, dependency rule); `check --deploy` clean against
+    prod settings.
+- **Still deferred from B1.5:** `seed_demo --user` (needs assets) and duplicating
+  starter template pages into a new portfolio (needs `layouts`).
+- **Dev DB is per-machine** (not committed). After pulling, a machine runs `uv sync`,
+  `migrate` (which backfills each existing user's portfolio and Free subscription), and
+  optionally `seed_users`. Superuser on each machine: `joshgrein2@gmail.com` - change
+  the documented dev password before it matters.
+- **Next action:** **B2.5** - `Account`, `AssetClass`, `AssetField`, `Asset` inside the
+  user's portfolio, every endpoint scoped through `holdings/access.accessible_portfolios`.
+  First tier decision likely lands here (asset cap on Free?) - and the downgrade rule
+  in PLAN §1.3a must be settled before any gate ships.
 
 ### Machine / environment notes
 
@@ -260,3 +266,187 @@ the restart / `axes_reset` workarounds instead.
 **What's next:** B2 - `holdings` from nothing (`Portfolio`, `PortfolioAccess`, default
 portfolio on signup, one `accessible_portfolios()` check). The plan's build order then
 needs a new step for `Account`/`AssetClass`/`Asset` before B3, which assumes they exist.
+
+Committed as `0901037` on new branch `accounts-complete-and-holdings` (not `main` - the
+harness rule is to branch before committing; merge/fast-forward when ready).
+
+### 2026-11-17 — B2 first pass: `holdings` with Portfolio + PortfolioAccess
+**Machine:** `Josh` (`C:\Users\Josh\Desktop\tracker`) · **Commit:** uncommitted (branch
+`accounts-complete-and-holdings`)
+
+Built `holdings` from nothing - only what a user *owns* and *who can use it*, nothing
+inside a portfolio yet. Design decisions worth keeping:
+
+- **One access module.** `holdings/access.py` (`accessible_portfolios(user, min_role)`,
+  `role_for`, `has_role`, `READ`/`EDIT`/`OWN`) is the only code that reads access rows.
+  `accessible_portfolios` annotates `my_role` via a **Subquery**, not
+  `.annotate(F("access__role"))` - the latter's join can silently pick a different row
+  once B9 adds non-owner rows. Inactive/anonymous users get `none()` here as well as at
+  login, so a stale session can't see anything.
+- **404 vs 403:** the viewset's queryset *is* `accessible_portfolios`, so no access at all
+  is a 404 indistinguishable from a missing id (tested). `HasPortfolioRole` then gives 403
+  only to users who can see the object but lack the role (viewer PATCH, manager DELETE).
+- **Owner row integrity** is enforced by DB constraints (one row per user+portfolio; one
+  *active* owner per portfolio - revoked owner rows don't count), and every creation path
+  goes through `services.create_portfolio` / `add_owner_access` (API, signup signal,
+  admin). Admin makes `owner` read-only after create and the access inline read-only;
+  changing either directly would desync them - ownership transfer is a B9 service.
+- **Last-portfolio rule:** an owner can't delete their only portfolio (400), so every
+  user always has one to land in. Admin bypasses this (operator tool).
+- **Signal order matters:** `holdings` is listed after `accounts` in `INSTALLED_APPS` so
+  the Profile exists before the default portfolio reads its currency. Profile currency
+  is CAD at signup anyway; the dependency is noted in settings.
+- **Backfill migration** `holdings/0002` gave every pre-existing user a default portfolio
+  (ran on this machine's dev DB: 6 users, 6 portfolios). The other machine gets the same
+  on `migrate`.
+- `Portfolio.base_currency` reuses `accounts.Profile.Currency` (allowed: holdings may
+  import accounts). Move to `marketdata` once B3 owns currencies.
+- Dropped v1's `summary_metrics` from `Portfolio` - it's a display preference for
+  `layouts`, not portfolio data.
+
+115 tests pass (37 new in `holdings/tests/`: models/constraints/backfill, access,
+cross-user isolation + roles over the API, admin). Live HTTP smoke test against a
+temporary `runserver` passed (list, create, rename, 404 on another user's portfolio,
+400 on deleting the last one).
+
+PLAN.md: B1.1's portfolio bullets annotated as built in B2; B2 got an "as built" note;
+build order gained **B2.5** (`Account`/`AssetClass`/`AssetField`/`Asset`), which B3 needs.
+
+**Ownership model decided (user, same session).** Questioned whether portfolios should
+exist at all; settled on: an individual owns exactly one; an **advisor owns one per
+client** (the client's book is the advisor's); the **client logs in as a viewer**. So
+`Portfolio` stays (advisors need many; access needs something to attach to), and the
+plan's old B9 "client claims the portfolio / ownership transfers" flow is dropped.
+Accepted consequence, written into PLAN.md B2: client data belongs to the advisor.
+
+- Code: `services.can_create_portfolio()` - only `role = advisor` may create beyond the
+  first portfolio (an individual who owns none may create one). This leans on `role`
+  being staff-set/read-only via the API (decided earlier today) - if `role` ever becomes
+  self-service, this check needs another gate. 120 tests pass (new: creation rules,
+  advisor-owns/client-views, client can't see the advisor's other clients).
+- PLAN.md: B2 intro rewritten as the ownership model; B9 rewritten (advisor invites
+  client as viewer; no transfer; invite signups must skip the default portfolio); B10
+  moved the org tag to `Portfolio.organization` and made "advisor leaves" a portfolio
+  transfer within the org.
+- Open for B9, noted in the plan: a client who signs up via invitation currently would
+  still get an empty "My portfolio" from the signup receiver.
+
+**Then scoped down (user, same session):** advisor-owned client portfolios are a *future
+idea*, not current scope - "client access would purely be for viewing" when it happens.
+So for now **every user has exactly one portfolio**. Removed what was building ahead:
+`can_create_portfolio`, `delete_portfolio`/`LastPortfolioError`, and the API's create and
+delete - `/api/portfolios/` is now list / retrieve / PATCH. Kept the access-role table and
+`HasPortfolioRole` (cheap; B9 stays additive) and their tests, which grant rows directly.
+**No DB unique constraint on `Portfolio.owner`** on purpose: B9's advisors would need
+many, and staff can still add one in admin. 116 tests pass. PLAN.md B2 now says "now:
+one per user" and lists advisor/client as the future idea; B9 notes it brings back an
+advisor-only create endpoint.
+
+**Then settled for real (user answered three explicit questions, same session):**
+1. Anyone who registers is an advisor (`Profile.role` default -> `advisor`; migration
+   `accounts/0003` also switches existing profiles).
+2. Clients are a `holdings.Client` record (name, email, phone, notes) with exactly one
+   portfolio, owned by the advisor. Clients don't log in.
+3. Advisors still get a personal portfolio at signup, but **locked** ("make it so they
+   can not use it"). "This will be as far as we get with the advisor right now" - next,
+   the app is completed for a single (client) portfolio.
+
+Implementation notes for whoever touches this next:
+- `Client` has **no `advisor` field** on purpose - it belongs to whoever owns its
+  portfolio, so there's nothing to drift. List clients only via
+  `access.accessible_clients()`.
+- **Locking** is one filter in one place: `access.usable_portfolios()` =
+  `accessible_portfolios()` minus `client IS NULL`. Every endpoint (and every B2.5 child
+  endpoint) must scope through `usable_portfolios`, not `accessible_portfolios`.
+- `Portfolio.client` is a nullable one-to-one with `CASCADE`: deleting a client deletes
+  the portfolio (and later, all holdings in it). The API's client delete is owner-only.
+- Holdings migrations were **regenerated** (never committed/shared): `0001` now includes
+  `Client`. Done via `migrate holdings zero` on this machine's dev DB.
+- `seed_users` roles changed (all advisors; carol is the demoted "individual" case);
+  new `holdings` command `seed_clients` gives alice 2 clients and bob 1.
+- Frontend harness: new Clients tab (list / add / edit client + portfolio name & currency
+  / delete). 127 tests pass; live HTTP smoke test passed (create, rename portfolio,
+  cross-advisor 404, individual 403, delete cascades portfolio).
+
+### 2026-11-17 — Advisor layer removed: individual-only for now
+**Machine:** `Josh` (`C:\Users\Josh\Desktop\tracker`) · **Commit:** uncommitted (branch
+`accounts-complete-and-holdings`)
+
+User: "just remove the advisor. we will build this out as just the individual for now."
+Removed everything advisor-shaped; none of it had been committed, so migrations were
+**regenerated** rather than reversed (dev DB rolled back with `migrate holdings zero` /
+`migrate accounts 0002` first):
+
+- `holdings.Client`, `Portfolio.client`, `/api/clients/`, `access.usable_portfolios` /
+  `accessible_clients`, `services.create_client` / `can_create_clients`, the
+  `seed_clients` command, `ClientAdmin` and the personal/client admin filter.
+- **`Profile.role` removed entirely** (migration `accounts/0003_remove_profile_role`) -
+  my call: with no advisors it distinguished nothing. It was part of the committed B1
+  (`0901037`), hence a real migration rather than a regenerated one. Re-add it with
+  the advisor work. `options/` no longer returns `roles`.
+- Each user's single portfolio is simply *theirs* and usable (no "locked personal").
+  `/api/portfolios/` = list / retrieve / PATCH. Kept the `PortfolioAccess` roles and
+  `HasPortfolioRole` (sharing infrastructure, not advisor-specific).
+- `seed_users` no longer sets roles (carol is now just another verified user, AUD).
+- Frontend: Clients tab replaced by a Portfolio tab (view/rename/change currency).
+
+Design notes for if advisors come back (were built and tested before removal): `Client`
+record with **no `advisor` field** (belongs to whoever owns its portfolio, so nothing to
+drift); `Portfolio.client` nullable one-to-one, CASCADE; advisor's signup portfolio
+"locked" by a single filter in the access module so every endpoint inherits it; client
+creation gated on staff-set `role`. PLAN.md B9 carries the summary.
+
+115 tests pass; frontend lints and builds.
+
+### 2026-11-17 — Tiers (structure only)
+**Machine:** `Josh` (`C:\Users\Josh\Desktop\tracker`) · **Commit:** uncommitted (branch
+`accounts-complete-and-holdings`)
+
+User wants pricing tiers - "free, something, and a highest tier, maybe just 2 tiers to
+start a free and paid. idk yet". Built only the structure, so the open decisions (how
+many tiers, prices, what each unlocks) stay cheap:
+
+- `accounts.Subscription` (one-to-one with User, `tier` = `free` | `paid`, timestamps),
+  created by the same signal as Profile; migration `0004` backfills Free for existing
+  users. A separate model rather than a Profile field so billing fields (provider ids,
+  status, period end) land next to `tier` later without moving data.
+- `accounts/tiers.py`: `TIER_LIMITS` (empty for both tiers - nothing to gate yet),
+  `tier_for` / `limit` / `allows`. `limit()` raises `KeyError` on an unknown key on
+  purpose. Rule written into PLAN §1.3a: features check limits, never tier names.
+- Admin: Subscription inline on the user page, tier column + filter, "Set tier: Free /
+  Paid" actions. `me/` returns `tier` read-only (test proves PATCH can't change it).
+- Frontend Settings shows "Plan: Free/Paid".
+- PLAN.md: new §1.3a (what's built, candidate gates per step, and a downgrade rule to
+  decide before the first gate: never delete data, make over-limit items read-only);
+  build order row **B1a**.
+
+123 tests pass.
+
+### 2026-11-17 — Session summary (`Josh` machine)
+**Machine:** `Josh` (`C:\Users\Josh\Desktop\tracker`) · **Commit:** `0901037`, then the
+commit that adds this entry (branch `accounts-complete-and-holdings`)
+
+The entries above are long and include reversals; this is the short version, in order:
+
+1. **Bootstrapped this machine** (venv, `.env`, migrate, superuser) and fixed the
+   harness's `127.0.0.1` vs `localhost` cookie bug.
+2. **Finished B1** - plus-address email links, timezone validation, `me/` tests,
+   `logout-all/`, `security-events/`, `options/`, admin deactivate ending sessions,
+   `seed_users`; full auth screens in the harness. Committed as `0901037`.
+3. **Started B2 `holdings`** from nothing (there is no v1 code): `Portfolio`,
+   `PortfolioAccess`, one access module, `/api/portfolios/`, signup-created portfolio.
+4. **Ownership model went back and forth** - multiple portfolios per user → one per
+   user → advisors owning one portfolio per client (with a `Client` model, built and
+   tested) → **individuals only**. Final: one portfolio per user; the advisor design is
+   kept as a future idea in PLAN.md B9 and in the "Advisor layer removed" entry above.
+   `Profile.role` was removed with it.
+5. **Added tiers** (structure only): `Subscription` Free/Paid + `tiers.py` limit table.
+   Discussed and kept: limits in code (standard at 2-3 plans), tier on its own model
+   rather than Profile (billing state vs user preferences).
+6. **Plan updates:** B10 Organizations (future), §1.3a Tiers, B2.5 inserted before B3
+   (B3 needs `Asset`), v1 sections marked design-only.
+
+Because nothing after `0901037` had been committed or shared, the holdings migrations
+were **regenerated** during step 4 rather than reversed. Any other machine that somehow
+applied an intermediate holdings migration should `migrate holdings zero` before
+pulling - in practice none did, since none of it left this machine.

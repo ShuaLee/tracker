@@ -6,7 +6,7 @@ from django.utils.html import format_html
 from .audit import log_event
 from .emails import send_password_reset_email
 from .forms import ProfileInlineForm, UserChangeForm, UserCreationForm
-from .models import Profile, SecurityEvent, User
+from .models import Profile, SecurityEvent, Subscription, User
 from .sessions import end_all_sessions
 
 # Basic admin branding. Nowhere better to put this yet - accounts is the
@@ -37,24 +37,33 @@ class ProfileInline(admin.StackedInline):
     can_delete = False
 
 
+class SubscriptionInline(admin.StackedInline):
+    """Staff set tiers by hand until billing exists (PLAN.md 1.3a)."""
+
+    model = Subscription
+    can_delete = False
+    fields = ["tier", "created_at", "updated_at"]
+    readonly_fields = ["created_at", "updated_at"]
+
+
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     add_form = UserCreationForm
     form = UserChangeForm
     model = User
-    inlines = [ProfileInline]
+    inlines = [ProfileInline, SubscriptionInline]
 
     list_display = [
         "email",
         "display_name_column",
-        "role_column",
+        "tier_column",
         "is_active",
         "is_staff",
         "email_verified_badge",
         "last_login",
         "date_joined",
     ]
-    list_filter = ["is_active", "is_staff", "profile__role", EmailVerifiedFilter]
+    list_filter = ["subscription__tier", "is_active", "is_staff", EmailVerifiedFilter]
     search_fields = ["email", "profile__display_name"]
     ordering = ["email"]
     list_per_page = 50
@@ -96,16 +105,18 @@ class UserAdmin(BaseUserAdmin):
         "send_password_reset_email_action",
         "unlock_users",
         "end_sessions",
+        "set_tier_free",
+        "set_tier_paid",
     ]
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related("profile")
+        return super().get_queryset(request).select_related("profile", "subscription")
 
     def get_inline_instances(self, request, obj=None):
-        # Profile is created automatically by the post_save signal once the
-        # user exists (signals.py) - there's nothing to show an inline for
-        # on the add page, and submitting one there would just race the
-        # signal for the same OneToOne row.
+        # Profile and Subscription are created automatically by the post_save
+        # signal once the user exists (signals.py) - there's nothing to show
+        # an inline for on the add page, and submitting one there would just
+        # race the signal for the same OneToOne row.
         if obj is None:
             return []
         return super().get_inline_instances(request, obj)
@@ -114,9 +125,23 @@ class UserAdmin(BaseUserAdmin):
     def display_name_column(self, obj):
         return obj.profile.display_name or "—"
 
-    @admin.display(description="Role", ordering="profile__role")
-    def role_column(self, obj):
-        return obj.profile.get_role_display()
+    @admin.display(description="Tier", ordering="subscription__tier")
+    def tier_column(self, obj):
+        subscription = getattr(obj, "subscription", None)
+        return subscription.get_tier_display() if subscription else "—"
+
+    def _set_tier(self, request, queryset, tier):
+        updated = Subscription.objects.filter(user__in=queryset).update(tier=tier)
+        label = Subscription.Tier(tier).label
+        self.message_user(request, f"Set {updated} user(s) to {label}.", messages.SUCCESS)
+
+    @admin.action(description="Set tier: Free")
+    def set_tier_free(self, request, queryset):
+        self._set_tier(request, queryset, Subscription.Tier.FREE)
+
+    @admin.action(description="Set tier: Paid")
+    def set_tier_paid(self, request, queryset):
+        self._set_tier(request, queryset, Subscription.Tier.PAID)
 
     @admin.display(description="Email verified", boolean=False)
     def email_verified_badge(self, obj):

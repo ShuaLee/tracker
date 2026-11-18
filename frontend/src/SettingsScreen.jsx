@@ -46,7 +46,7 @@ function AccountSection({ me }) {
       <h2>Account</h2>
       <p>Email: {me.email}</p>
       <p>Email status: {me.is_email_verified ? "verified" : "not verified"}</p>
-      <p>Role: {me.profile.role} (set by an administrator)</p>
+      <p>Plan: {me.tier === "paid" ? "Paid" : "Free"}</p>
       <p>Member since: {new Date(me.date_joined).toLocaleDateString()}</p>
       {!me.is_email_verified && (
         <>

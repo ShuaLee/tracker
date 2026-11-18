@@ -55,10 +55,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 class Profile(models.Model):
     """One-to-one account preferences, created automatically for every User."""
 
-    class Role(models.TextChoices):
-        INDIVIDUAL = "individual", "Individual"
-        ADVISOR = "advisor", "Advisor"
-
     class Currency(models.TextChoices):
         CAD = "CAD", "Canadian dollar"
         USD = "USD", "US dollar"
@@ -82,12 +78,6 @@ class Profile(models.Model):
     timezone = models.CharField(
         max_length=64, default="America/Toronto", validators=[validate_timezone]
     )
-    # Set by staff in admin only - read-only through /api/auth/me/, so nobody
-    # can self-promote to advisor ahead of the sharing features (PLAN.md B9)
-    # that will key off it.
-    role = models.CharField(
-        max_length=20, choices=Role.choices, default=Role.INDIVIDUAL
-    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -96,6 +86,33 @@ class Profile(models.Model):
 
     def __str__(self):
         return self.display_name or self.user.email
+
+
+class Subscription(models.Model):
+    """Which tier a user is on (PLAN.md 1.3a). One per user, created by the
+    same post_save signal as Profile; everyone starts on Free.
+
+    Staff change tiers in admin for now - there is no payment provider yet.
+    When billing arrives, its fields (provider customer/subscription ids,
+    status, current period end) belong on this model, so tier data never has
+    to move. What a tier *allows* lives in accounts/tiers.py, not here.
+    """
+
+    class Tier(models.TextChoices):
+        # Adding a tier (e.g. a middle one) = a new choice here + a row in
+        # tiers.TIER_LIMITS. Order is lowest to highest.
+        FREE = "free", "Free"
+        PAID = "paid", "Paid"
+
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, primary_key=True, related_name="subscription"
+    )
+    tier = models.CharField(max_length=20, choices=Tier.choices, default=Tier.FREE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.user.email} - {self.get_tier_display()}"
 
 
 class SecurityEvent(models.Model):

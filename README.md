@@ -29,11 +29,13 @@ so the superuser and demo users have to be created on each machine.
 `manage.py seed_users` creates (or resets) one account per interesting state, all with
 password `TestPass123!` (override with `--password`). Refuses to run unless `DEBUG` is on.
 
+Each user gets their one portfolio automatically.
+
 | Email | State |
 |---|---|
-| `alice@example.com` | verified individual (CAD) |
-| `bob@example.com` | verified individual (USD) |
-| `carol@example.com` | verified **advisor** |
+| `alice@example.com` | verified (CAD) |
+| `bob@example.com` | verified (USD) |
+| `carol@example.com` | verified (AUD, Sydney) |
 | `dave@example.com` | email **not verified** |
 | `erin@example.com` | **inactive** - login always fails |
 

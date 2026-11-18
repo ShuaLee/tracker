@@ -27,7 +27,6 @@ class MeTests(APITestCase):
                 "display_name": "",
                 "base_currency": "CAD",
                 "timezone": "America/Toronto",
-                "role": "individual",
             },
         )
         # Never leak secrets or internals.
@@ -75,12 +74,6 @@ class MeTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("base_currency", response.data["profile"])
 
-    def test_role_cannot_be_self_assigned(self):
-        response = self.client.patch(self.url, {"profile": {"role": "advisor"}}, format="json")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["profile"]["role"], "individual")
-        self.assertEqual(User.objects.get(pk=self.user.pk).profile.role, "individual")
-
     def test_email_cannot_be_changed_here(self):
         response = self.client.patch(self.url, {"email": "other@example.com"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -92,6 +85,6 @@ class OptionsTests(APITestCase):
         response = self.client.get(reverse("auth-options"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn({"value": "CAD", "label": "Canadian dollar"}, response.data["currencies"])
-        self.assertEqual([r["value"] for r in response.data["roles"]], ["individual", "advisor"])
+        self.assertNotIn("roles", response.data)
         self.assertIn("America/Toronto", response.data["timezones"])
         self.assertEqual(response.data["timezones"], sorted(response.data["timezones"]))

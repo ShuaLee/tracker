@@ -8,8 +8,8 @@ i.e. accounts and marketdata must import from nothing else in the project;
 holdings may import accounts/marketdata; targets may import holdings;
 layouts may import everything.
 
-Only `accounts` exists in this repo so far, so this currently just confirms
-it stays self-contained - but it's written to cover every app as they're
+`accounts` and `holdings` exist so far (holdings may import accounts, and
+does - Profile.Currency); the rest are covered automatically as they're
 added in later steps, rather than needing a rewrite each time.
 """
 

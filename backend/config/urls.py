@@ -13,4 +13,5 @@ urlpatterns = [
     # deployment can move it off the default path (DJANGO_ADMIN_URL env var).
     path(settings.ADMIN_URL, admin.site.urls),
     path("api/auth/", include("accounts.urls")),
+    path("api/", include("holdings.urls")),
 ]

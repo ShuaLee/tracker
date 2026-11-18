@@ -61,6 +61,9 @@ INSTALLED_APPS = [
     "axes",
     # Project
     "accounts.apps.AccountsConfig",
+    # After accounts: its post_save receiver (creates the Profile) must run
+    # before holdings' (creates the default portfolio from the profile).
+    "holdings.apps.HoldingsConfig",
 ]
 
 MIDDLEWARE = [

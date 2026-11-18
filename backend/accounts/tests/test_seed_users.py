@@ -17,7 +17,7 @@ class SeedUsersTests(TestCase):
         self.assertEqual(User.objects.count(), len(DEMO_USERS))
 
         carol = User.objects.get(email="carol@example.com")
-        self.assertEqual(carol.profile.role, "advisor")
+        self.assertEqual((carol.profile.base_currency, carol.profile.timezone), ("AUD", "Australia/Sydney"))
         self.assertTrue(carol.check_password(DEFAULT_PASSWORD))
         self.assertFalse(User.objects.get(email="dave@example.com").is_email_verified)
         self.assertFalse(User.objects.get(email="erin@example.com").is_active)

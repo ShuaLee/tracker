@@ -9,13 +9,15 @@ from django.dispatch import receiver
 from axes.signals import user_locked_out
 
 from .audit import log_event
-from .models import Profile, User
+from .models import Profile, Subscription, User
 
 
 @receiver(post_save, sender=User)
 def create_profile(sender, instance, created, **kwargs):
     if created:
         Profile.objects.create(user=instance)
+        # Everyone starts on Free (PLAN.md 1.3a).
+        Subscription.objects.create(user=instance)
 
 
 @receiver(user_logged_in)

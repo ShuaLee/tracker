@@ -14,13 +14,13 @@ from django.utils import timezone
 
 DEFAULT_PASSWORD = "TestPass123!"
 
-# email, display name, role, currency, timezone, verified, active
+# email, display name, currency, timezone, verified, active
 DEMO_USERS = [
-    ("alice@example.com", "Alice Chen", "individual", "CAD", "America/Toronto", True, True),
-    ("bob@example.com", "Bob Martin", "individual", "USD", "America/New_York", True, True),
-    ("carol@example.com", "Carol Advisor", "advisor", "CAD", "America/Vancouver", True, True),
-    ("dave@example.com", "Dave Unverified", "individual", "EUR", "Europe/Berlin", False, True),
-    ("erin@example.com", "Erin Inactive", "individual", "GBP", "Europe/London", True, False),
+    ("alice@example.com", "Alice Chen", "CAD", "America/Toronto", True, True),
+    ("bob@example.com", "Bob Martin", "USD", "America/New_York", True, True),
+    ("carol@example.com", "Carol Singh", "AUD", "Australia/Sydney", True, True),
+    ("dave@example.com", "Dave Unverified", "EUR", "Europe/Berlin", False, True),
+    ("erin@example.com", "Erin Inactive", "GBP", "Europe/London", True, False),
 ]
 
 
@@ -46,7 +46,7 @@ class Command(BaseCommand):
         User = get_user_model()
         now = timezone.now()
 
-        for email, name, role, currency, tz, verified, active in DEMO_USERS:
+        for email, name, currency, tz, verified, active in DEMO_USERS:
             user, created = User.objects.get_or_create(email=email)
             user.is_active = active
             if not verified:
@@ -60,14 +60,13 @@ class Command(BaseCommand):
 
             profile = user.profile
             profile.display_name = name
-            profile.role = role
             profile.base_currency = currency
             profile.timezone = tz
             profile.full_clean()
             profile.save()
 
             state = ", ".join(
-                filter(None, [role, "verified" if verified else "unverified", None if active else "inactive"])
+                filter(None, [currency, "verified" if verified else "unverified", None if active else "inactive"])
             )
             self.stdout.write(f"{'created' if created else 'reset'}  {email}  ({state})")
 

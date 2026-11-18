@@ -249,7 +249,6 @@ class OptionsView(APIView):
                 "currencies": [
                     {"value": value, "label": label} for value, label in Profile.Currency.choices
                 ],
-                "roles": [{"value": value, "label": label} for value, label in Profile.Role.choices],
                 "timezones": sorted(available_timezones()),
             }
         )

@@ -37,4 +37,4 @@ class ProfileInlineForm(forms.ModelForm):
 
     class Meta:
         model = Profile
-        fields = ["display_name", "base_currency", "timezone", "role"]
+        fields = ["display_name", "base_currency", "timezone"]

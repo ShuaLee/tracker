@@ -91,7 +91,7 @@ export function fetchSecurityEvents() {
   return apiFetch("/api/auth/security-events/");
 }
 
-// { currencies: [{value, label}], roles: [{value, label}], timezones: [...] }
+// { currencies: [{value, label}], timezones: [...] }
 export function fetchOptions() {
   return apiFetch("/api/auth/options/");
 }
@@ -131,6 +131,18 @@ export function confirmPasswordReset(uid, token, newPassword) {
     method: "POST",
     body: { uid, token, new_password: newPassword },
   });
+}
+
+// --- portfolio (holdings) ----------------------------------------------------
+// Every user has exactly one portfolio, created at signup.
+
+export function listPortfolios() {
+  return apiFetch("/api/portfolios/");
+}
+
+// fields: { name?, base_currency? }
+export function updatePortfolio(id, fields) {
+  return apiFetch(`/api/portfolios/${id}/`, { method: "PATCH", body: fields });
 }
 
 // --- account ---------------------------------------------------------------
