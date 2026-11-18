@@ -70,14 +70,36 @@ class AdminActionTests(TestCase):
             follow=True,
         )
 
+    def _target_session(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_login(self.target)
+        return client
+
     def test_deactivate_and_reactivate_actions(self):
+        target_client = self._target_session()
+
         self._run_action("deactivate_users")
         self.target.refresh_from_db()
         self.assertFalse(self.target.is_active)
+        self.assertEqual(target_client.get(reverse("auth-me")).status_code, 403)
+        self.assertTrue(SecurityEvent.objects.filter(event="deactivated", user=self.target).exists())
 
         self._run_action("reactivate_users")
         self.target.refresh_from_db()
         self.assertTrue(self.target.is_active)
+        self.assertTrue(SecurityEvent.objects.filter(event="reactivated", user=self.target).exists())
+
+    def test_end_sessions_action(self):
+        target_client = self._target_session()
+        self.assertEqual(target_client.get(reverse("auth-me")).status_code, 200)
+
+        self._run_action("end_sessions")
+        self.assertEqual(target_client.get(reverse("auth-me")).status_code, 403)
+        self.assertTrue(SecurityEvent.objects.filter(event="logout_all", user=self.target).exists())
+        # The staff member running the action stays logged in.
+        self.assertEqual(self.client.get(reverse("admin:index")).status_code, 200)
 
     def test_mark_email_verified_action(self):
         self.assertIsNone(self.target.email_verified_at)

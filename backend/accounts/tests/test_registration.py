@@ -102,6 +102,20 @@ class VerifyEmailTests(APITestCase):
         second = self.client.post(reverse("auth-verify-email"), self.query, format="json")
         self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_verify_link_survives_plus_address(self):
+        # "+" means a space in a query string - the link must percent-encode
+        # it or the SPA reads back "plus addr@example.com" and verification fails.
+        from accounts.emails import send_verification_email
+
+        user = User.objects.create_user(email="plus+addr@example.com", password=STRONG_PASSWORD)
+        mail.outbox.clear()
+        send_verification_email(user)
+        query = extract_query(extract_link(mail.outbox[0].body, "/verify-email"))
+        self.assertEqual(query["email"], "plus+addr@example.com")
+
+        response = self.client.post(reverse("auth-verify-email"), query, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
 
 class ResendVerificationTests(APITestCase):
     def setUp(self):

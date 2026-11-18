@@ -4,6 +4,7 @@ from django.db import models
 from django.utils import timezone
 
 from .managers import UserManager
+from .validation import validate_timezone
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -76,8 +77,14 @@ class Profile(models.Model):
     )
     # Plain CharField - a full IANA zone list isn't baked into DB-level
     # choices (hundreds of entries in every migration). The admin form
-    # renders it as a dropdown instead (see accounts/forms.py).
-    timezone = models.CharField(max_length=64, default="America/Toronto")
+    # renders it as a dropdown instead (see accounts/forms.py); the validator
+    # is what the API relies on.
+    timezone = models.CharField(
+        max_length=64, default="America/Toronto", validators=[validate_timezone]
+    )
+    # Set by staff in admin only - read-only through /api/auth/me/, so nobody
+    # can self-promote to advisor ahead of the sharing features (PLAN.md B9)
+    # that will key off it.
     role = models.CharField(
         max_length=20, choices=Role.choices, default=Role.INDIVIDUAL
     )
@@ -99,11 +106,13 @@ class SecurityEvent(models.Model):
         LOGIN = "login", "Login"
         LOGIN_FAILED = "login_failed", "Login failed"
         LOGOUT = "logout", "Logout"
+        LOGOUT_ALL = "logout_all", "Logged out everywhere"
         PASSWORD_CHANGED = "password_changed", "Password changed"
         PASSWORD_RESET_REQUESTED = "password_reset_requested", "Password reset requested"
         PASSWORD_RESET_DONE = "password_reset_done", "Password reset done"
         EMAIL_CHANGED = "email_changed", "Email changed"
         DEACTIVATED = "deactivated", "Deactivated"
+        REACTIVATED = "reactivated", "Reactivated"
         LOCKED = "locked", "Locked"
 
     user = models.ForeignKey(

@@ -3,9 +3,11 @@ from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
 
+from .audit import log_event
 from .emails import send_password_reset_email
 from .forms import ProfileInlineForm, UserChangeForm, UserCreationForm
 from .models import Profile, SecurityEvent, User
+from .sessions import end_all_sessions
 
 # Basic admin branding. Nowhere better to put this yet - accounts is the
 # only app registered so far; move it to a `core` app if/when one exists.
@@ -93,6 +95,7 @@ class UserAdmin(BaseUserAdmin):
         "mark_email_verified",
         "send_password_reset_email_action",
         "unlock_users",
+        "end_sessions",
     ]
 
     def get_queryset(self, request):
@@ -121,15 +124,37 @@ class UserAdmin(BaseUserAdmin):
             return format_html('<span style="color:#1a7f37;font-weight:600;">&#10003; verified</span>')
         return format_html('<span style="color:#b42318;font-weight:600;">&#10007; unverified</span>')
 
+    # Audit rows written by admin actions pass request=None: the request is
+    # the *staff member's*, and recording their IP/user agent against the
+    # target user's account would misattribute it.
+
     @admin.action(description="Deactivate selected users")
     def deactivate_users(self, request, queryset):
-        updated = queryset.update(is_active=False)
-        self.message_user(request, f"Deactivated {updated} user(s).", messages.SUCCESS)
+        # Matches the self-service deactivate/ endpoint: sessions end now,
+        # rather than lingering until the next request notices is_active.
+        users = list(queryset.filter(is_active=True))
+        for user in users:
+            user.is_active = False
+            user.save(update_fields=["is_active"])
+            end_all_sessions(user)
+            log_event("deactivated", user=user)
+        self.message_user(request, f"Deactivated {len(users)} user(s).", messages.SUCCESS)
 
     @admin.action(description="Reactivate selected users")
     def reactivate_users(self, request, queryset):
-        updated = queryset.update(is_active=True)
-        self.message_user(request, f"Reactivated {updated} user(s).", messages.SUCCESS)
+        users = list(queryset.filter(is_active=False))
+        for user in users:
+            user.is_active = True
+            user.save(update_fields=["is_active"])
+            log_event("reactivated", user=user)
+        self.message_user(request, f"Reactivated {len(users)} user(s).", messages.SUCCESS)
+
+    @admin.action(description="End all sessions (log out everywhere)")
+    def end_sessions(self, request, queryset):
+        for user in queryset:
+            end_all_sessions(user)
+            log_event("logout_all", user=user)
+        self.message_user(request, f"Ended all sessions for {queryset.count()} user(s).", messages.SUCCESS)
 
     @admin.action(description="Mark email verified")
     def mark_email_verified(self, request, queryset):
@@ -150,10 +175,12 @@ class UserAdmin(BaseUserAdmin):
 
     @admin.action(description="Unlock (clear lockout)")
     def unlock_users(self, request, queryset):
-        count = 0
-        for user in queryset:
-            count += axes_reset(username=user.email)
-        self.message_user(request, f"Cleared lockout records for {queryset.count()} user(s).", messages.SUCCESS)
+        cleared = sum(axes_reset(username=user.email) for user in queryset)
+        self.message_user(
+            request,
+            f"Cleared {cleared} lockout record(s) across {queryset.count()} user(s).",
+            messages.SUCCESS,
+        )
 
 
 @admin.register(SecurityEvent)

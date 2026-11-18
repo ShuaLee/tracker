@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import Profile
+from .models import Profile, SecurityEvent
 from .validation import validate_user_password
 
 User = get_user_model()
@@ -13,9 +13,14 @@ User = get_user_model()
 
 
 class ProfileSerializer(serializers.ModelSerializer):
+    # timezone is validated by the model field's validate_timezone, which
+    # ModelSerializer picks up automatically.
     class Meta:
         model = Profile
         fields = ["display_name", "base_currency", "timezone", "role"]
+        # Staff set role in admin (see Profile.role) - a PATCH including it
+        # is accepted but the value is ignored, like email on MeSerializer.
+        read_only_fields = ["role"]
 
 
 class MeSerializer(serializers.ModelSerializer):
@@ -111,3 +116,23 @@ class EmailChangeSerializer(serializers.Serializer):
 
 class DeactivateSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True)
+
+
+# ---------------------------------------------------------------------------
+# sessions / security activity
+# ---------------------------------------------------------------------------
+
+
+class LogoutAllSerializer(serializers.Serializer):
+    # False (default): end every session including this one - "I think
+    # someone else is in my account". True: keep this device signed in.
+    keep_current = serializers.BooleanField(default=False)
+
+
+class SecurityEventSerializer(serializers.ModelSerializer):
+    event_label = serializers.CharField(source="get_event_display", read_only=True)
+
+    class Meta:
+        model = SecurityEvent
+        fields = ["event", "event_label", "ip", "user_agent", "created_at"]
+        read_only_fields = fields

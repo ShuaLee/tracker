@@ -17,10 +17,43 @@ copy .env.example .env
 .venv\Scripts\python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 .venv\Scripts\python manage.py migrate
 .venv\Scripts\python manage.py createsuperuser
+.venv\Scripts\python manage.py seed_users   # optional demo users, see below
 .venv\Scripts\python manage.py check
 ```
 
-`backend/.env` is gitignored - every checkout needs its own.
+`backend/.env` and `backend/db.sqlite3` are gitignored - every checkout needs its own,
+so the superuser and demo users have to be created on each machine.
+
+### Demo users
+
+`manage.py seed_users` creates (or resets) one account per interesting state, all with
+password `TestPass123!` (override with `--password`). Refuses to run unless `DEBUG` is on.
+
+| Email | State |
+|---|---|
+| `alice@example.com` | verified individual (CAD) |
+| `bob@example.com` | verified individual (USD) |
+| `carol@example.com` | verified **advisor** |
+| `dave@example.com` | email **not verified** |
+| `erin@example.com` | **inactive** - login always fails |
+
+### Locked out while testing?
+
+- Five bad logins lock that email + IP (django-axes): `manage.py axes_reset`.
+- `429 Request was throttled`: DRF rate limits (5/min per IP, 10/hour per email) live
+  in the in-memory cache, so restarting `runserver` clears them.
+
+## Frontend (test harness)
+
+`frontend/` is a deliberately unstyled React app for exercising the auth API by hand.
+
+```powershell
+cd frontend
+npm install
+npm run dev        # http://localhost:5173 - use localhost, not 127.0.0.1
+```
+
+Emails print in the `runserver` terminal in dev; paste their links into the browser.
 
 ## Settings
 

@@ -44,6 +44,14 @@ What happened, why, and anything the next session needs to know.
   53 passing tests plus a project-wide import-dependency-rule test. `manage.py migrate`
   has been run against the dev SQLite DB and a superuser exists there
   (`joshgrein2@gmail.com` — change that password before relying on it for anything real).
+  **The dev DB is per-machine** (not committed): the `Josh` machine has its own, seeded
+  2026-11-17 — see that day's "second machine" entry.
+- **Frontend harness** now covers every B1 flow (register, verify, login, forgot/reset,
+  change password/email, deactivate, log out everywhere, security activity), which
+  satisfies PLAN.md §2.2's B1 row.
+- **User/profile layer is complete** as of 2026-11-17 (see that day's last entry). The
+  only B1.5 items still open need `holdings`: default portfolio + owner access row on
+  signup, and `seed_demo --user`.
 - **Explicitly deferred (not forgotten):** B1.1's "sign-up creates a default Portfolio +
   owner PortfolioAccess row" is NOT implemented. `holdings` doesn't exist yet, and
   PLAN.md §1.1 says `accounts` must import nothing else in the project — building that
@@ -53,12 +61,17 @@ What happened, why, and anything the next session needs to know.
   and the deferred default-portfolio-on-signup receiver described above. The frontend
   scaffold (below) was a side excursion for manual testing, not part of the backend
   build order - it doesn't block or get blocked by B2.
+  **There is no v1 code.** PLAN.md §1.12/§2.1 described `holdings`/`layouts`/a full React
+  app as "existing" - confirmed with the user 2026-11-17 that none of it was ever built;
+  both sections are now marked as design only. Everything is built outward from
+  users/profiles, so B2 creates `holdings` from nothing.
 
 ### Machine / environment notes
 
 | | |
 |---|---|
-| Repo path (this machine) | `C:\Users\engineer\Desktop\tracker` |
+| Repo path (`engineer` machine) | `C:\Users\engineer\Desktop\tracker` |
+| Repo path (`Josh` machine) | `C:\Users\Josh\Desktop\tracker` |
 | Repo path in PLAN.md | `C:\Users\Josh\Desktop\portfolio-dashboard` — stale, do not treat as authoritative |
 | Python | 3.12 (`backend/.python-version`) |
 | Venv | `backend/.venv`, **not committed** — a fresh machine must bootstrap it (see README.md) |
@@ -178,3 +191,72 @@ Vite 8→6. Revisit if `npm audit` still flags it once Vite's own dependency upd
 Vite's dev server binds to `localhost` (IPv6 `::1` on this machine), not `127.0.0.1` -
 use `http://localhost:5173`, which is also the exact origin backend/.env's
 `CORS_ALLOWED_ORIGINS`/`CSRF_TRUSTED_ORIGINS`/`FRONTEND_URL` already expect.
+
+### 2026-11-17 — Second machine bootstrapped; full B1 frontend; B10 added to plan
+**Machine:** `Josh` (`C:\Users\Josh\Desktop\tracker`) · **Commit:** uncommitted
+
+**Bootstrap.** Fresh checkout: created `backend/.venv` and `uv sync` per README, generated
+this machine's own `backend/.env` from `.env.example`, ran `migrate`. The dev DB is not
+shared between machines, so the superuser from the B1 entry did not exist here - recreated
+`joshgrein2@gmail.com` (superuser, `ChangeMe123456!`) plus test users `alice`/`bob`/`carol`
+(advisor)/`dave` (unverified)/`erin` (inactive) `@example.com`, all `TestPass123!`. Seeded
+with a throwaway shell script, not a committed command - `seed_demo` (PLAN.md B1.5) is
+still the right home once `holdings` exists.
+
+**Gotchas hit, worth knowing:**
+- `frontend/src/api.js` defaulted to `http://127.0.0.1:8000` while Vite serves
+  `localhost:5173`. Those are different *sites*, so the `SameSite=Lax` session cookie was
+  never sent on fetches and every authenticated call 403'd right after a 200 login. Default
+  is now `http://localhost:8000` (and `.env.example`). The 2026-11-17 scaffold entry's curl
+  test didn't catch this because curl ignores SameSite.
+- Failed logins against a not-yet-existing account still count: axes locked the email
+  (cleared with `manage.py axes_reset`), and the per-account DRF throttle (10/hour) kept
+  answering 429. Throttle counts live in the default LocMemCache, i.e. inside the
+  `runserver` process - restarting it clears them; nothing on disk does.
+
+**Backend fix:** `accounts/emails.py` interpolated the email into verify/change links
+unencoded, so `a+b@x.com` arrived as `a b@x.com` and verification failed. Links are now
+built with `urlencode`; regression test `test_verify_link_survives_plus_address` (fails
+without the fix). All accounts tests pass.
+
+**Frontend:** the harness now has register, forgot-password, `/verify-email` and
+`/reset-password` landing screens (matching the paths `emails.py` links to - no router
+library, `App.jsx` reads `location.pathname`), and a settings page with profile,
+resend-verification, change password, change email and deactivate. "Delete account" is
+labelled as deactivation, because that's all the API does (PLAN.md: hard delete is an admin
+action). Still intentionally unstyled.
+
+**Plan:** added **B10 — Organizations** (PLAN.md §1.11, renumbering the later sections):
+an org owner sees all the org's advisors and their org-tagged clients, read-only, built on
+B9's `PortfolioAccess` rather than a hierarchy. It replaces B9's one-line `Practice` idea.
+Also added a B2 note: route every access check through one `accessible_portfolios()` so
+B10 is additive.
+
+**User/profile layer finished** (same session, after confirming there is no v1 code and
+the build goes outward from users/profiles). Gaps found by reading the code, now closed:
+- `PATCH me/` accepted any timezone string (`"Not/AZone"` saved fine - only the admin form
+  restricted it). `Profile.timezone` now has a model validator (`validation.validate_timezone`,
+  migration `0002`), which `ProfileSerializer` picks up. There were **no tests for `me/` at
+  all** - `test_me.py` added.
+- `role` was self-assignable via `PATCH me/`. Made read-only (staff set it in admin). The
+  user hadn't answered self-service vs admin-only when told to finish; chose the
+  conservative default - reverse it in `ProfileSerializer.Meta.read_only_fields` if wanted.
+- PLAN B1.3's "log out everywhere" existed only as `sessions.end_all_sessions()`; now
+  `POST logout-all/` (optional `keep_current`). Plus `GET security-events/` (own last 50
+  `SecurityEvent`s) and `GET options/` (currency/role/timezone choices; the frontend no
+  longer hard-codes them). New event types `logout_all`, `reactivated`.
+- Admin deactivate used `queryset.update()` - no audit row, sessions left alive until the
+  next request. Now ends sessions and logs; reactivate logs; new "end all sessions" action.
+  Admin-originated audit rows pass `request=None` so the staff member's IP isn't recorded
+  against the target account.
+- `manage.py seed_users` replaces the throwaway seeding script (dev only, idempotent).
+- 78 tests pass; live HTTP smoke test (csrf → login → options → bad-tz 400 → role ignored →
+  security-events → logout-all both modes) passed against a temporary `runserver`.
+
+Dev throttle rates were **not** loosened: `test_throttling.py` asserts the real 5/min
+rates and runs under dev settings, so a dev-only override would break it. README documents
+the restart / `axes_reset` workarounds instead.
+
+**What's next:** B2 - `holdings` from nothing (`Portfolio`, `PortfolioAccess`, default
+portfolio on signup, one `accessible_portfolios()` check). The plan's build order then
+needs a new step for `Account`/`AssetClass`/`Asset` before B3, which assumes they exist.

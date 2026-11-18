@@ -62,3 +62,19 @@ class ProfileSignalTests(TestCase):
         u1 = User.objects.create_user(email="one@example.com", password=STRONG_PASSWORD)
         u2 = User.objects.create_user(email="two@example.com", password=STRONG_PASSWORD)
         self.assertNotEqual(u1.profile.pk, u2.profile.pk)
+
+
+class ProfileValidationTests(TestCase):
+    def setUp(self):
+        self.profile = User.objects.create_user(email="tz@example.com", password=STRONG_PASSWORD).profile
+
+    def test_default_timezone_is_valid(self):
+        self.profile.full_clean()  # does not raise
+
+    def test_rejects_unknown_timezone(self):
+        from django.core.exceptions import ValidationError
+
+        self.profile.timezone = "Not/AZone"
+        with self.assertRaises(ValidationError) as ctx:
+            self.profile.full_clean()
+        self.assertIn("timezone", ctx.exception.message_dict)

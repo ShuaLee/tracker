@@ -1,56 +1,60 @@
 import { useState } from "react";
 import { login } from "./api.js";
+import { Field, Message } from "./ui.jsx";
+import { useAction } from "./useAction.js";
 
-export default function LoginScreen({ onLoggedIn }) {
+export default function LoginScreen({ onLoggedIn, onCreateAccount, onForgotPassword }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
+  const { submitting, message, run } = useAction();
 
-  async function handleSubmit(event) {
+  function handleSubmit(event) {
     event.preventDefault();
-    setSubmitting(true);
-    setError(null);
-
-    const response = await login(email, password);
-    setSubmitting(false);
-
-    if (response.ok) {
-      onLoggedIn(response.data);
-    } else {
-      setError(response.data?.detail || "Login failed.");
-    }
+    run(() => login(email, password), {
+      fallback: "Login failed.",
+      onSuccess: (response) => onLoggedIn(response.data),
+    });
   }
 
   return (
     <div>
       <h1>Log in</h1>
       <form onSubmit={handleSubmit}>
-        <div>
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
-        </div>
+        <Field
+          id="email"
+          label="Email"
+          type="email"
+          autoComplete="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          required
+        />
+        <Field
+          id="password"
+          label="Password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          required
+        />
         <button type="submit" disabled={submitting}>
           {submitting ? "Logging in..." : "Log in"}
         </button>
       </form>
-      {error && <p>{error}</p>}
+      <Message message={message} />
+
+      <p>
+        <button type="button" onClick={onForgotPassword}>
+          Forgot password?
+        </button>
+      </p>
+      <p>
+        No account yet?{" "}
+        <button type="button" onClick={onCreateAccount}>
+          Create account
+        </button>
+      </p>
     </div>
   );
 }

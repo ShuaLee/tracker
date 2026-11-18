@@ -25,16 +25,19 @@ from .emails import (
     send_password_reset_email,
     send_verification_email,
 )
+from .models import Profile
 from .serializers import (
     ChangePasswordSerializer,
     DeactivateSerializer,
     EmailChangeSerializer,
     LoginSerializer,
+    LogoutAllSerializer,
     MeSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RegisterSerializer,
     ResendVerificationSerializer,
+    SecurityEventSerializer,
     VerifyEmailSerializer,
 )
 from .sessions import end_all_sessions, end_other_sessions
@@ -45,9 +48,12 @@ from .throttling import (
     ResendVerificationAccountThrottle,
 )
 from .tokens import email_verification_token_generator, for_email
-from .validation import validate_user_password
+from .validation import available_timezones, validate_user_password
 
 User = get_user_model()
+
+# How many of a user's own SecurityEvents security-events/ returns.
+SECURITY_EVENTS_LIMIT = 50
 
 # Deliberately identical across branches that must not be told apart from
 # the outside (does this email exist / is it already verified / etc).
@@ -201,6 +207,52 @@ class LogoutView(APIView):
     def post(self, request):
         django_logout(request)
         return Response({"detail": "Logged out."})
+
+
+class LogoutAllView(APIView):
+    """End every session for this user - PLAN.md B1.3's "log out everywhere".
+    No password required: it only ever takes access away."""
+
+    def post(self, request):
+        serializer = LogoutAllSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        log_event("logout_all", request=request, user=user)
+
+        if serializer.validated_data["keep_current"]:
+            end_other_sessions(user, except_session_key=request.session.session_key)
+            return Response({"detail": "Signed out of every other session."})
+
+        end_all_sessions(user)
+        django_logout(request)
+        return Response({"detail": "Signed out everywhere."})
+
+
+class SecurityEventsView(APIView):
+    """The caller's own recent security activity (logins, failed attempts,
+    password/email changes...) so they can spot something they didn't do."""
+
+    def get(self, request):
+        events = request.user.security_events.order_by("-created_at")[:SECURITY_EVENTS_LIMIT]
+        return Response(SecurityEventSerializer(events, many=True).data)
+
+
+class OptionsView(APIView):
+    """Choices for the profile form, so clients don't hard-code them.
+    Public: nothing here is account-specific."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response(
+            {
+                "currencies": [
+                    {"value": value, "label": label} for value, label in Profile.Currency.choices
+                ],
+                "roles": [{"value": value, "label": label} for value, label in Profile.Role.choices],
+                "timezones": sorted(available_timezones()),
+            }
+        )
 
 
 class MeView(APIView):

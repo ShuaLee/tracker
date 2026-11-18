@@ -5,15 +5,14 @@ BaseUserCreationForm is the class Django's docs say to subclass for exactly
 this.
 """
 
-import zoneinfo
-
 from django import forms
 from django.contrib.auth.forms import BaseUserCreationForm
 from django.contrib.auth.forms import UserChangeForm as DjangoUserChangeForm
 
 from .models import Profile, User
+from .validation import available_timezones
 
-TIMEZONE_CHOICES = [(tz, tz) for tz in sorted(zoneinfo.available_timezones())]
+TIMEZONE_CHOICES = [(tz, tz) for tz in sorted(available_timezones())]
 
 
 class UserCreationForm(BaseUserCreationForm):

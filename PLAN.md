@@ -90,7 +90,10 @@ All under `/api/auth/`. Session authentication (cookie) to start; token/JWT can 
 | `POST resend-verification/` | Send the email again | Throttled |
 | `POST login/` | Start session | Generic error ("email or password is incorrect"). Rotates the session key on success |
 | `POST logout/` | End session | |
-| `GET/PATCH me/` | Read / update user + profile | Email is not changed here |
+| `POST logout-all/` | Log out everywhere | `keep_current: true` ends only the *other* sessions. No password needed (only removes access) |
+| `GET/PATCH me/` | Read / update user + profile | Email is not changed here. `role` is read-only (staff set it in admin) so nobody self-promotes to advisor before B9. Timezone must be a valid IANA zone |
+| `GET options/` | Profile form choices | Currencies, roles, timezones - so clients never hard-code them. Public |
+| `GET security-events/` | Own recent security activity | Last 50 `SecurityEvent`s for the caller, newest first (logins, failed attempts, password/email changes) |
 | `POST password/change/` | Change password while logged in | Requires current password. Keeps this session, ends all others |
 | `POST password/reset/` | Request reset email | Always returns 200 (no account enumeration) |
 | `POST password/reset/confirm/` | Set new password from emailed link | Django's `PasswordResetTokenGenerator` (single-use, expires). Ends all sessions |
@@ -147,7 +150,7 @@ Deliberately later: two-factor authentication (TOTP), social login, breached-pas
   - `list_filter`: is_active, is_staff, role, email verified; `search_fields`: email, display name; `ordering`: email;
   - `ProfileInline` (one-to-one, cannot be deleted);
   - read-only: last_login, date_joined, password_changed_at;
-  - actions: deactivate, reactivate, mark email verified, send password-reset email, unlock (clear lockout).
+  - actions: deactivate (also ends the user's sessions), reactivate, mark email verified, send password-reset email, unlock (clear lockout), end all sessions. Deactivate / reactivate / end sessions write `SecurityEvent` rows.
 - `SecurityEventAdmin`: read-only list, filter by event and date, search by email and IP. No add/change/delete.
 - `PortfolioAdmin` shows owner and an inline of `PortfolioAccess` rows.
 - Only `is_staff` users can sign in to admin. Admin passwords are never set or shown in plain text; admins trigger a reset email instead.
@@ -183,6 +186,7 @@ Scoping (written once, used everywhere):
 - `HasPortfolioRole` permission: safe methods need any role; writes need `owner` or `manager`; sharing and deletion need `owner`.
 - Writes validate that any referenced portfolio / account / asset class / node belongs to a portfolio the user may edit.
 - Objects outside the user's access return **404**, not 403.
+- Every access check goes through **one** function (e.g. `holdings.access.accessible_portfolios(user, min_role)`), never an inline `filter(access__user=...)` in a view. B10 (organizations) adds a second source of access; with one function that is a single change, not a sweep of every endpoint.
 
 In this step only the owner row exists for each portfolio; the sharing endpoints and manager features are step B9. Building the table and permission check now means B9 is additive.
 
@@ -266,11 +270,40 @@ Built only after individuals are using the product. Uses the `PortfolioAccess` t
 - **Manager sets up a client:** a user with `role = advisor` creates a portfolio and invites the client to claim it. Until claimed, the manager is the owner. On claim, ownership transfers to the client and the manager keeps a `manager` row.
 - Every invitation needs explicit acceptance by a verified user. Owners see a list of who has access and can revoke in one action. Managers can leave a portfolio.
 - Manager view: `GET /api/clients/` — every portfolio where the user has manager access, with summary figures. Templates, pages and theme trees can be duplicated across those portfolios (`/duplicate/` already supports a target portfolio).
-- `Practice` (optional, later still): a firm grouping several managers, so client access survives one advisor leaving.
+- Firms grouping several advisors: see **B10 — Organizations** below (replaces the earlier one-line `Practice` idea).
 - Audit: `PortfolioAuditLog` (portfolio, user, action, object, before/after, timestamp) for changes made by anyone other than the owner, visible to the owner.
 - Before real client data is involved: privacy review (consent wording, data export, deletion), and keep the product positioned as tracking and reporting, not a manager's regulatory system of record.
 
-## 1.11 Existing backend (done in v1 — keep)
+## 1.11 Step B10 — Organizations (later, after B9)
+
+An organization is a firm (advisory practice, family office) that groups advisors. Its **owner can see every advisor in the org and every client portfolio those advisors manage.** Built on top of B9's sharing model, not instead of it: clients still own their portfolios, and access still flows through `PortfolioAccess`.
+
+New app `organizations`, slotted into the dependency rule as `accounts ← organizations ← holdings` (update the import-rule test when it lands).
+
+- `Organization`: `name`, `owner` (FK user, `PROTECT`), `created_at`.
+- `OrganizationMembership`: `organization`, `user`, `role` (`owner` | `admin` | `advisor`), `status` (`invited` | `active` | `removed`), `invited_by`, dates. Unique on (`organization`, `user`); exactly one active `owner`, kept in step with `Organization.owner`. Joining requires explicit acceptance by a verified user, like B9 invitations.
+- `PortfolioAccess.organization` (nullable FK): set when an advisor takes on a client *on behalf of* the org. The client sees the org's name on the invitation and is agreeing to the org's visibility, not just the individual advisor's.
+
+| Org role | See advisors | See org clients | Edit client portfolios | Manage members |
+|---|---|---|---|---|
+| Owner | all | all, read-only | only through their own manager row | yes; transfer ownership; close org |
+| Admin | all | all, read-only | only through their own manager row | invite / remove advisors |
+| Advisor | — | their own clients | yes (their manager row) | no |
+
+Rules:
+
+- **Scoping:** `accessible_portfolios()` (B2) gains one more source: portfolios with an active access row tagged with an org where the user is an active owner/admin. Org-derived access is **read-only**; writes still need a direct `owner`/`manager` row.
+- **Advisor leaves:** their org-tagged client rows are **reassigned** to another advisor in the org (owner/admin action), not revoked, so the client keeps service. Untagged rows (the advisor's personal clients) leave with the advisor.
+- **Client leaves:** revoking the advisor's access row also ends the org's visibility. The client never needs to know org internals to cut access.
+- **Audit:** org-level views of a client portfolio are recorded in `PortfolioAuditLog` and visible to the client.
+- **API:** `GET /api/orgs/<id>/advisors/` (with client counts and summary figures), `GET /api/orgs/<id>/clients/?advisor=<id>`, membership invite / accept / remove / reassign endpoints.
+- **Tests that matter most:** an org owner sees exactly their org's tagged clients, never another org's or an advisor's personal clients; org access cannot write; removing an advisor and reassigning keeps the client's data intact; a client revoke removes org visibility.
+
+Open questions (decide when B10 starts, not now): can an advisor belong to more than one org (start with one); should owners be able to edit, or only view (start view-only); per-seat billing (out of scope).
+
+## 1.12 Holdings and layouts design (from v1 — NOT built in this repo)
+
+> **Correction (2026-11-17):** none of the code described in this section exists. This repo was started fresh; the only app built is `accounts`. Treat what follows as the *design* for `holdings`/`layouts`, to be built outward from users/profiles, not as code to keep.
 
 `holdings`:
 
@@ -297,7 +330,7 @@ API (existing): `/api/portfolios/`, `/api/accounts/`, `/api/asset-classes/` (+ `
 - Widget values use the security-priced value when an asset has a security.
 - `seed_demo` takes `--user`, and seeds a small theme tree, a few securities and transactions.
 
-## 1.12 Backend build order
+## 1.13 Backend build order
 
 Each step is runnable and testable on its own, entirely through admin and tests.
 
@@ -312,8 +345,9 @@ Each step is runnable and testable on its own, entirely through admin and tests.
 | **B7** | CSV import (IBKR first) | An IBKR positions file imports with a correct diff |
 | **B8** | Hardening | Import-rule test, API docs (drf-spectacular) |
 | **B9** | Sharing + manager accounts (later) | Invite, accept, revoke and claim flows tested; manager client list |
+| **B10** | Organizations (later, after B9) | Org owner sees all advisors and their org clients, read-only; advisor departure reassigns clients; cross-org isolation tests pass |
 
-## 1.13 Backend verification
+## 1.14 Backend verification
 
 - `manage.py test` for: widget functions, drift maths, position recalculation, FX conversion, ownership scoping, import diffing.
 - FMP client tested against recorded responses (no live calls in tests).
@@ -325,7 +359,9 @@ Each step is runnable and testable on its own, entirely through admin and tests.
 
 **Status: frozen as a skeleton.** No new frontend features until the backend steps above are done. Only changes needed to keep it working against the new backend are allowed.
 
-## 2.1 What exists (done in v1 — keep as is)
+## 2.1 v1 frontend design (NOT built in this repo)
+
+> **Correction (2026-11-17):** none of this exists. The only frontend is the unstyled `frontend/` auth harness (see LOG.md). Kept as the design target for later.
 
 - Vite + React, `react-grid-layout` for the widget grid, `recharts` for charts, Inter bundled locally, `lucide-react` icons.
 - Page switcher listing the portfolio's pages uniformly. "New Page": blank or copy from a template.
@@ -355,5 +391,6 @@ Each step is runnable and testable on its own, entirely through admin and tests.
 5. **Profile/settings** — display name, base currency, timezone.
 6. Known gaps: responsive shell (collapsible sidebar on phones), dark mode.
 7. Sharing and manager features (backend step B9): "Who has access" panel with invite and revoke, accept-invitation screen, portfolio switcher, manager's client list, apply a template to many portfolios — only after individuals are using it.
+8. Organization views (backend step B10): advisor list, clients grouped by advisor, member invite / remove / reassign — only after B9's manager features are in use.
 
 **Complexity guardrail:** the widget grid is kept but not extended. New capability arrives as fixed screens, not as more widget types and options.
