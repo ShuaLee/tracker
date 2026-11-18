@@ -12,10 +12,8 @@ export default function PortfolioScreen() {
 
   useEffect(() => {
     run(listPortfolios, {
-      // Normally exactly one; the API lists any shared with the user too
-      // (sharing isn't built yet), so pick the one they own.
-      onSuccess: (response) =>
-        setPortfolio(response.data.find((p) => p.my_role === "owner") || response.data[0] || null),
+      // Every user has exactly one portfolio.
+      onSuccess: (response) => setPortfolio(response.data[0] || null),
     });
     fetchOptions()
       .then((response) => response.ok && setCurrencies(response.data.currencies))

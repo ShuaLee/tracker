@@ -54,12 +54,13 @@ record how it got here.)*
     deactivate, `seed_users`.
   - **B1a tiers** (PLAN.md §1.3a) - structure only: `accounts.Subscription` (`free` |
     `paid`, staff-set), limits table in `accounts/tiers.py` - **nothing gated yet**.
-  - **B2 `holdings`** - `Portfolio` + `PortfolioAccess` (owner/manager/viewer, only owner
-    rows exist), one access module (`holdings/access.py`), `/api/portfolios/`
-    (list / retrieve / PATCH), signup creates the portfolio.
+  - **B2 `holdings`** - `Portfolio` only (owner, name, base currency), one access module
+    (`holdings/access.accessible_portfolios` = "portfolios you own"), `/api/portfolios/`
+    (list / retrieve / PATCH), signup creates the portfolio. No `PortfolioAccess` table -
+    removed until sharing (B9).
   - **Harness** covers every auth flow, settings, security activity, plan display, and
     a Portfolio tab (rename / currency).
-  - 123 tests pass (accounts, holdings, dependency rule); `check --deploy` clean against
+  - 109 tests pass (accounts, holdings, dependency rule); `check --deploy` clean against
     prod settings.
 - **Still deferred from B1.5:** `seed_demo --user` (needs assets) and duplicating
   starter template pages into a new portfolio (needs `layouts`).
@@ -70,7 +71,9 @@ record how it got here.)*
 - **Next action:** **B2.5** - `Account`, `AssetClass`, `AssetField`, `Asset` inside the
   user's portfolio, every endpoint scoped through `holdings/access.accessible_portfolios`.
   First tier decision likely lands here (asset cap on Free?) - and the downgrade rule
-  in PLAN §1.3a must be settled before any gate ships.
+  in PLAN §1.3a must be settled before any gate ships. Child models scope with
+  `portfolio__in=accessible_portfolios(user)`; there's no object-level permission class
+  (everything you can see, you own).
 
 ### Machine / environment notes
 
@@ -450,3 +453,29 @@ Because nothing after `0901037` had been committed or shared, the holdings migra
 were **regenerated** during step 4 rather than reversed. Any other machine that somehow
 applied an intermediate holdings migration should `migrate holdings zero` before
 pulling - in practice none did, since none of it left this machine.
+
+### 2026-11-17 — `PortfolioAccess` removed
+**Machine:** `Josh` (`C:\Users\Josh\Desktop\tracker`) · **Commit:** the commit that adds
+this entry (branch `accounts-complete-and-holdings`, after `eb10d60`)
+
+User asked what PortfolioAccess was for; with one portfolio per user and no sharing, it
+only duplicated `Portfolio.owner` (every row was an owner row) while costing two DB
+constraints, owner-row bookkeeping in every create path, an admin inline, a permission
+class and role tests. User agreed to remove it.
+
+- `holdings/access.accessible_portfolios(user)` is now just `Portfolio.objects.filter(owner=user)`
+  (none for anonymous/inactive). **Keep routing every check through it** - that's what
+  makes sharing (B9) a change in one function instead of a sweep of endpoints.
+- Removed: `PortfolioAccess` model, `permissions.HasPortfolioRole`, `role_for` /
+  `has_role` / `my_role`, `services.add_owner_access`, the access inline and access
+  admin. `/api/portfolios/` serializer no longer returns `owner_email` / `my_role`.
+- **Migrations regenerated again, even though `eb10d60` was committed:** that commit was
+  never pushed, and this machine's dev DB was the only one that applied it (rolled back
+  with `migrate holdings zero`). So `holdings/0001` now creates only `Portfolio`, and the
+  `0002` backfill creates only portfolios. If any other DB ever applied `eb10d60`'s
+  holdings migrations, roll holdings back to zero before migrating.
+- PLAN.md B2 rewritten (owner-only scoping, sharing notes say B9 re-adds the table);
+  B1.1/B1.4/B1.5/B9/build-order references updated. Frontend Portfolio tab no longer
+  reads `my_role`.
+
+109 tests pass; frontend lints and builds.

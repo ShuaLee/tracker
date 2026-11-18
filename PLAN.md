@@ -74,8 +74,8 @@ Nothing else is built until this step is complete and tested. It has four parts:
   - `email_verified_at` (nullable), `password_changed_at`.
 - `Profile`: `user` (OneToOne), `display_name`, `base_currency` (default `CAD`), `timezone` (default `America/Toronto`), `created_at`, `updated_at`. Created automatically by a `post_save` signal on `User`. (*A `role` field — `individual` | `advisor` — was built and then removed on 2026-11-17: the app is individual-only for now. Re-add it with the advisor work, B9.*)
 - `holdings.Portfolio.owner` → FK to `settings.AUTH_USER_MODEL` (required, `PROTECT`). Add `Portfolio.base_currency`.
-- `holdings.PortfolioAccess` (see 1.4) — the table is created in this step so every portfolio has an owner row from the start.
-- On sign-up, one default `Portfolio` is created for the user, with an owner `PortfolioAccess` row, and the starter template pages are duplicated into it.
+- `holdings.PortfolioAccess` (see 1.4) — the table is created in this step so every portfolio has an owner row from the start. *(Removed 2026-11-17 — deferred to sharing, B9.)*
+- On sign-up, one default `Portfolio` is created for the user, and the starter template pages are duplicated into it.
 - *As built:* the three bullets above landed in **B2**, not B1 — `accounts` may not import other project apps, so the sign-up receiver lives in `holdings`. Duplicating starter template pages waits for `layouts`.
 - Templates stay unowned (`Page.portfolio = None`, `is_template = True`).
 
@@ -153,7 +153,7 @@ Deliberately later: two-factor authentication (TOTP), social login, breached-pas
   - read-only: last_login, date_joined, password_changed_at;
   - actions: deactivate (also ends the user's sessions), reactivate, mark email verified, send password-reset email, unlock (clear lockout), end all sessions. Deactivate / reactivate / end sessions write `SecurityEvent` rows.
 - `SecurityEventAdmin`: read-only list, filter by event and date, search by email and IP. No add/change/delete.
-- `PortfolioAdmin` shows owner and an inline of `PortfolioAccess` rows.
+- `PortfolioAdmin` shows the owner (and, once sharing exists, an inline of who has access).
 - Only `is_staff` users can sign in to admin. Admin passwords are never set or shown in plain text; admins trigger a reset email instead.
 - Outside development: admin served at a non-default path, and staff accounts are the first to get two-factor when it is added.
 - `createsuperuser` works with email only.
@@ -162,7 +162,7 @@ Deliberately later: two-factor authentication (TOTP), social login, breached-pas
 
 - A user can register, verify, log in, change password, reset a forgotten password, change email, log out and deactivate — each covered by a test.
 - Tests also prove: weak passwords rejected; wrong current password rejected; reset token cannot be reused or used after expiry; other sessions end on password change; repeated bad logins lock out; throttles return 429; responses do not reveal whether an email exists; inactive users are refused.
-- Two users created in admin each get a profile, a default portfolio and an owner access row.
+- Two users created in admin each get a profile and a default portfolio.
 - `manage.py check --deploy` passes with production settings.
 - `seed_demo --user <email>` fills one user's portfolio.
 
@@ -181,44 +181,28 @@ Candidate gates to decide as each feature lands (not commitments): number of ass
 
 Rule for downgrades (decide before the first gate ships): going Paid → Free should never delete data — over-limit items become read-only, not removed.
 
-## 1.4 Step B2 — Portfolio access: ownership, sharing roles and scoping
+## 1.4 Step B2 — Portfolio ownership and scoping
 
-**Ownership model (decided 2026-11-17).** Every portfolio has exactly one owner; other users are *granted access* to it.
+**Ownership model (decided 2026-11-17).** Every portfolio has exactly one owner, and for now only the owner can see or change it.
 
 **Now — individuals only:** every user owns **exactly one** portfolio, created at signup and living as long as the account. The API has no create or delete. Grouping inside it uses accounts (where held), asset types (what it is) and themes (what it's for) — never extra portfolios. The whole app is built out for this single-portfolio individual first.
 
 **Future idea — advisors (explored 2026-11-17, built, then removed to keep scope on the individual; see LOG.md):** an advisor creates `Client` records (name, email, phone, notes), each with exactly one portfolio **owned by the advisor**; clients don't log in, or later log in purely to **view** (a viewer row). Client data belongs to the advisor. The advisor's own signup portfolio would be locked. Needs `Profile.role` back. Details in B9.
 
-The `owner`/`manager`/`viewer` access roles and their checks are built now (cheap, and makes sharing/advisors additive), but nothing creates manager/viewer rows yet.
-
-`holdings.PortfolioAccess`:
-
-- `portfolio`, `user`, `role` (`owner` | `manager` | `viewer`), `status` (`active` | `revoked`), `granted_by`, `created_at`, `revoked_at`.
-- Unique on (`portfolio`, `user`). Exactly one active `owner` row per portfolio, kept in step with `Portfolio.owner`.
-
-| Role | Read | Edit holdings, targets, pages | Share / revoke | Delete portfolio |
-|---|---|---|---|---|
-| Owner | yes | yes | yes | yes |
-| Manager | yes | yes | no | no |
-| Viewer | yes | no | no | no |
-
 Scoping (written once, used everywhere):
 
-- `PortfolioScopedMixin`: querysets are limited to portfolios where the requesting user has an **active** access row; child models filter through `portfolio`.
-- `HasPortfolioRole` permission: safe methods need any role; writes need `owner` or `manager`; sharing and deletion need `owner`.
-- Writes validate that any referenced portfolio / account / asset class / node belongs to a portfolio the user may edit.
-- Objects outside the user's access return **404**, not 403.
-- Every access check goes through **one** function (e.g. `holdings.access.accessible_portfolios(user, min_role)`), never an inline `filter(access__user=...)` in a view. B10 (organizations) adds a second source of access; with one function that is a single change, not a sweep of every endpoint.
+- **One function decides access:** `holdings.access.accessible_portfolios(user)` — today simply "portfolios you own" (empty for anonymous or inactive users). Every endpoint over portfolios, and over anything inside one, builds its queryset from it; child models filter through `portfolio__in=accessible_portfolios(user)`. No view ever filters on `owner` itself.
+- Objects outside the user's access return **404**, not 403 — they're simply not in the queryset.
+- Writes validate that any referenced portfolio / account / asset class / node belongs to a portfolio the user can access.
+- **Sharing later (B9) is a change inside that one function**, plus a `PortfolioAccess` table (portfolio, user, role `owner` | `manager` | `viewer`, status, granted_by, dates) and a role check for writes. That table was built in the first B2 pass and **removed 2026-11-17** — with one owner per portfolio and no sharing, it only duplicated `Portfolio.owner`.
 
-In this step only the owner row exists for each portfolio; the sharing endpoints and manager features are step B9. Building the table and permission check now means B9 is additive.
+**Tests that matter most:** user A cannot list, read, edit or duplicate into anything of user B; anonymous and inactive users see nothing.
 
-**Tests that matter most:** user A cannot list, read, edit or duplicate into anything of user B; a viewer cannot write; a manager cannot share or delete; a revoked row gives no access.
-
-**As built (B2):** `holdings` app with `Portfolio` (`owner`, `name`, `base_currency`, timestamps) and `PortfolioAccess`; DB constraints for one row per (portfolio, user) and one active owner per portfolio. `holdings/access.py` is the single access module (`accessible_portfolios`, `role_for`, `has_role`); `HasPortfolioRole` resolves the portfolio from any object, ready for child models.
+**As built (B2):** `holdings` app with `Portfolio` (`owner`, `name`, `base_currency`, timestamps) and `holdings/access.py`.
 
 - Signup creates the user's portfolio (`holdings/signals.py`, via `services.create_portfolio`), in their profile currency.
 - `/api/portfolios/` — list / retrieve / PATCH (rename, base currency). No create or delete. Staff can still create/delete in admin.
-- Admin: portfolio list + read-only access inline; owner fixed after creation.
+- Admin: portfolio list; owner fixed after creation.
 - Data migration backfilled a portfolio for users created before `holdings` existed.
 - No DB unique constraint on `Portfolio.owner` — deliberately, since future advisors would own many.
 - `v1`'s `summary_metrics` field was not carried over — it's a display setting that belongs with `layouts`.
@@ -294,7 +278,7 @@ Admin: `AllocationNode` with children and assignments inline; a read-only "Drift
 
 ## 1.10 Step B9 — Sharing and manager accounts (later)
 
-Built only after individuals are using the product. Uses the `PortfolioAccess` table from B2.
+Built only after individuals are using the product. Adds the `PortfolioAccess` table (see B2's scoping notes) and extends `holdings.access.accessible_portfolios` to include shared portfolios, plus a role check for writes.
 
 - `PortfolioInvitation`: `portfolio`, `email`, `role`, `token` (signed, single-use, expires), `invited_by`, `status` (`pending` | `accepted` | `declined` | `expired` | `cancelled`), dates.
 - **Advisors and clients:** bring back `Profile.role` (`individual` | `advisor`, staff-set). An advisor creates `Client` records (name, email, phone, notes), each with exactly one portfolio **owned by the advisor**; the advisor's own signup portfolio is locked; client data belongs to the advisor. (This was built once on 2026-11-17 — `holdings.Client`, `Portfolio.client` one-to-one, `/api/clients/`, `access.usable_portfolios` hiding the locked portfolio — then removed to focus on individuals; LOG.md has the design notes.)
@@ -371,7 +355,7 @@ Each step is runnable and testable on its own, entirely through admin and tests.
 |---|---|---|
 | **B1** | `accounts`: custom User, Profile, register / login / password change and reset / email change / deactivate, protections, user admin | All account flows and protection tests pass; `check --deploy` clean |
 | **B1a** | Tiers: `Subscription` (Free / Paid), staff-set, `tiers.py` limit table — structure only (§1.3a) | Built; limits filled in per feature |
-| **B2** | One `Portfolio` per user (created at signup); `PortfolioAccess` roles + scoping on every endpoint | Cross-user and role tests pass |
+| **B2** | One `Portfolio` per user (created at signup); owner-only scoping through `holdings/access.py` on every endpoint | Cross-user tests pass |
 | **B2.5** | What's inside a portfolio: `Account`, `AssetClass`, `AssetField`, `Asset` (design in §1.12), each scoped through `holdings/access.accessible_portfolios` | CRUD + admin for each; cross-user tests extended to every model; nothing can reference another portfolio's account/class |
 | **B3** | `marketdata` + FMP client + `sync_prices` | A linked asset's value updates from a stored price |
 | **B4** | `targets`: node tree, assignments, drift | `/drift/` returns correct numbers for a fixture tree |

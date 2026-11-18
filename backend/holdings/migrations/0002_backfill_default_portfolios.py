@@ -1,10 +1,10 @@
 """
-Give every user who existed before holdings was installed the default
-portfolio + owner access row that new users get from the post_save receiver
-(holdings/signals.py). Mirrors holdings.services.create_portfolio - a
-migration must use historical models, so it can't call the service itself.
+Give every user who existed before holdings was installed the portfolio that
+new users get from the post_save receiver (holdings/signals.py). Mirrors
+holdings.services.create_portfolio - a migration must use historical models,
+so it can't call the service itself.
 
-Reverse is a no-op: unapplying 0001 drops the tables anyway.
+Reverse is a no-op: unapplying 0001 drops the table anyway.
 """
 
 from django.conf import settings
@@ -18,18 +18,12 @@ def backfill(apps, schema_editor):
     User = apps.get_model(app_label, model_name)
     Profile = apps.get_model("accounts", "Profile")
     Portfolio = apps.get_model("holdings", "Portfolio")
-    PortfolioAccess = apps.get_model("holdings", "PortfolioAccess")
 
     currencies = dict(Profile.objects.values_list("user_id", "base_currency"))
-    for user in User.objects.filter(owned_portfolios__isnull=True).iterator():
-        portfolio = Portfolio.objects.create(
-            owner=user,
-            name=DEFAULT_PORTFOLIO_NAME,
-            base_currency=currencies.get(user.pk, "CAD"),
-        )
-        PortfolioAccess.objects.create(
-            portfolio=portfolio, user=user, role="owner", status="active", granted_by=user
-        )
+    Portfolio.objects.bulk_create(
+        Portfolio(owner=user, name=DEFAULT_PORTFOLIO_NAME, base_currency=currencies.get(user.pk, "CAD"))
+        for user in User.objects.filter(owned_portfolios__isnull=True)
+    )
 
 
 class Migration(migrations.Migration):
