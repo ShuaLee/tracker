@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import {
   changeEmail,
   changePassword,
-  deactivateAccount,
+  deleteAccount,
   fetchOptions,
   fetchSecurityEvents,
   logout,
@@ -25,7 +25,7 @@ export default function SettingsScreen({ me, onUpdated, onLoggedOut }) {
       <ChangeEmailSection me={me} />
       <SessionsSection onLoggedOut={onLoggedOut} />
       <SecurityActivitySection />
-      <DeactivateSection onDeactivated={onLoggedOut} />
+      <DeleteAccountSection onDeleted={onLoggedOut} />
       <hr />
       <button
         type="button"
@@ -46,7 +46,7 @@ function AccountSection({ me }) {
       <h2>Account</h2>
       <p>Email: {me.email}</p>
       <p>Email status: {me.is_email_verified ? "verified" : "not verified"}</p>
-      <p>Plan: {me.tier === "paid" ? "Paid" : "Free"}</p>
+      <p>Plan: {me.plan.name}</p>
       <p>Member since: {new Date(me.date_joined).toLocaleDateString()}</p>
       {!me.is_email_verified && (
         <>
@@ -335,24 +335,24 @@ function SecurityActivitySection() {
   );
 }
 
-function DeactivateSection({ onDeactivated }) {
+function DeleteAccountSection({ onDeleted }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const { submitting, message, run } = useAction();
 
   function handleSubmit(event) {
     event.preventDefault();
-    if (!window.confirm("Deactivate your account? You'll be logged out everywhere and won't be able to log back in.")) {
+    if (!window.confirm("Permanently delete your account and everything in it? This can't be undone.")) {
       return;
     }
-    run(() => deactivateAccount(currentPassword), { onSuccess: onDeactivated });
+    run(() => deleteAccount(currentPassword), { onSuccess: onDeleted });
   }
 
   return (
     <section>
       <h2>Delete account</h2>
       <p>
-        This deactivates your account: you're logged out on every device and can't log in again.
-        Your data is kept, and an admin can reactivate the account.
+        This permanently deletes your account and everything you've recorded. You're logged out on every
+        device. It can't be undone.
       </p>
       <form onSubmit={handleSubmit}>
         <Field
@@ -365,7 +365,7 @@ function DeactivateSection({ onDeactivated }) {
           required
         />
         <button type="submit" disabled={submitting}>
-          {submitting ? "Deactivating..." : "Deactivate account"}
+          {submitting ? "Deleting..." : "Delete my account"}
         </button>
       </form>
       <Message message={message} />

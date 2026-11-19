@@ -32,48 +32,39 @@ What happened, why, and anything the next session needs to know.
 
 ## Current state
 
-*(Rewritten 2026-11-17 at the end of the `Josh`-machine session; the entries below
-record how it got here.)*
+*(Rewritten 2026-11-18 after the restart onto Plan v3.1. Entries before the
+2026-11-18 "Restart" entry describe the old plan - its step names (B1, B2.5...) and
+app names (`accounts`, `holdings`) no longer exist.)*
 
-- **Plan version:** v2 (backend first). Django admin is the working interface. PLAN.md's
-  real Part 2 frontend (grid layout, charts, Targets screen) is not started. `frontend/`
-  is a separate, deliberately unstyled **test harness** for exercising the API by hand -
-  don't confuse the two.
-- **There is no v1 code.** PLAN.md §1.12 / §2.1 describe a v1 `holdings` / `layouts` /
-  React app as design only - none of it was ever built. Everything is built outward from
-  users/profiles.
-- **Product shape: individuals only.** Every user has exactly **one portfolio**, created
-  at signup. No advisors, clients or `Profile.role` - explored and removed this session;
-  advisors and organizations are future ideas (PLAN.md B9 / B10).
-- **Branch:** all of this session's work is on `accounts-complete-and-holdings` (not yet
-  merged into `main` or pushed). Merge/fast-forward `main` when ready.
-- **Done:**
-  - **B1 `accounts`** - complete: custom `User`/`Profile`/`SecurityEvent`, every
-    `/api/auth/` endpoint (incl. `logout-all/`, `security-events/`, `options/`),
-    timezone validation, axes lockout, DRF throttling, admin with session-ending
-    deactivate, `seed_users`.
-  - **B1a tiers** (PLAN.md §1.3a) - structure only: `accounts.Subscription` (`free` |
-    `paid`, staff-set), limits table in `accounts/tiers.py` - **nothing gated yet**.
-  - **B2 `holdings`** - `Portfolio` only (owner, name, base currency), one access module
-    (`holdings/access.accessible_portfolios` = "portfolios you own"), `/api/portfolios/`
-    (list / retrieve / PATCH), signup creates the portfolio. No `PortfolioAccess` table -
-    removed until sharing (B9).
-  - **Harness** covers every auth flow, settings, security activity, plan display, and
-    a Portfolio tab (rename / currency).
-  - 109 tests pass (accounts, holdings, dependency rule); `check --deploy` clean against
-    prod settings.
-- **Still deferred from B1.5:** `seed_demo --user` (needs assets) and duplicating
-  starter template pages into a new portfolio (needs `layouts`).
-- **Dev DB is per-machine** (not committed). After pulling, a machine runs `uv sync`,
-  `migrate` (which backfills each existing user's portfolio and Free subscription), and
-  optionally `seed_users`. Superuser on each machine: `joshgrein2@gmail.com` - change
-  the documented dev password before it matters.
-- **Next action:** **B2.5** - `Account`, `AssetClass`, `AssetField`, `Asset` inside the
-  user's portfolio, every endpoint scoped through `holdings/access.accessible_portfolios`.
-  First tier decision likely lands here (asset cap on Free?) - and the downgrade rule
-  in PLAN §1.3a must be settled before any gate ships. Child models scope with
-  `portfolio__in=accessible_portfolios(user)`; there's no object-level permission class
-  (everything you can see, you own).
+- **Read first:** `PRODUCT.md` (intent) and `PLAN.md` (**Plan v3.1** - steps 1-12). The
+  old v2 plan was replaced wholesale on 2026-11-18.
+- **Product:** individuals only (no advisors/clients/sharing), positions only (no
+  transactions), one invisible portfolio per user, Free + paid plans.
+- **Current step:** **Step 1 (project + users) - built, awaiting your confirmation**
+  before step 2 (PRODUCT.md: confirm each step before the next).
+- **What exists:**
+  - `users` app (rebuilt from scratch, replaces `accounts`): email-login `User`,
+    `Profile` (display name, base currency, timezone), `Plan` + `Subscription`
+    (Free seeded by migration, plans editable in admin, `users.entitlements.entitlements(user)`
+    - nothing enforced until step 11), `SecurityEvent` audit trail. `/api/auth/` endpoints
+    for register / verify / resend, login / logout / logout-all, me / options /
+    security-events, password change / reset / confirm, email change, delete account.
+    Protections per PLAN step 1: Argon2, password rules, per-IP + per-email throttles,
+    axes lockout, single-use expiring tokens, secure cookies in prod, secrets in `.env`.
+  - `portfolios` app (replaces `holdings`): `Portfolio` created at signup, base currency
+    follows the profile, `portfolios.access.accessible_portfolios(user)` is the only access
+    check. **No portfolio API** - PLAN 2.1 says the UI never mentions portfolios.
+  - `frontend/` test harness (unstyled, separate from step 10's real frontend): every
+    auth flow + settings.
+  - 83 tests; `check --deploy` clean against prod settings.
+- **Dev DB is per-machine** and was **reset** on 2026-11-18 (app rename = fresh
+  migrations). Any machine with an old database must delete `backend/db.sqlite3` and
+  `migrate` from scratch, then `createsuperuser` and optionally `seed_users`.
+- **Next action:** you confirm step 1; then **step 2** - asset types (standard seeded +
+  custom, with custom fields), accounts, holdings (quantity, avg cost, current price,
+  investment vs personal), base-currency totals with a manual FX rate. New apps per
+  PLAN 3: `Account` in `portfolios`; `assets` app for `AssetType` / `AssetField` /
+  `Instrument` / `Holding`. Calculations go in `valuation.py` as plain functions.
 
 ### Machine / environment notes
 
@@ -81,10 +72,10 @@ record how it got here.)*
 |---|---|
 | Repo path (`engineer` machine) | `C:\Users\engineer\Desktop\tracker` |
 | Repo path (`Josh` machine) | `C:\Users\Josh\Desktop\tracker` |
-| Repo path in PLAN.md | `C:\Users\Josh\Desktop\portfolio-dashboard` — stale, do not treat as authoritative |
 | Python | 3.12 (`backend/.python-version`) |
 | Venv | `backend/.venv`, **not committed** — a fresh machine must bootstrap it (see README.md) |
 | Package manager | uv, installed *inside* the venv, pinned in the dev group so `uv sync` cannot remove it |
+| VS Code | `.vscode/settings.json` is gitignored, so each machine needs its own: `"python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/Scripts/python.exe"` and `"python.analysis.extraPaths": ["${workspaceFolder}/backend"]`. Without them Pylance reports `Import "django.conf" could not be resolved` (wrong interpreter) and can't find `users` / `portfolios` (the workspace is `tracker/`, the Django root is `backend/`). Then *Python: Select Interpreter* → `backend\.venv`. |
 | `.env` | gitignored, machine-local. This machine's `.env` has a real generated `SECRET_KEY`; a fresh checkout copies `backend/.env.example` and generates its own (see README.md) — **the two machines do not and should not share one `.env`**. |
 
 The two machines use different paths and different usernames, so never hard-code an
@@ -479,3 +470,60 @@ class and role tests. User agreed to remove it.
   reads `my_role`.
 
 109 tests pass; frontend lints and builds.
+
+### 2026-11-18 — Restart onto Plan v3.1; user app rebuilt as `users`
+**Machine:** `Josh` (`C:\Users\Josh\Desktop\tracker`) · **Commit:** the commit that adds
+this entry (branch `accounts-complete-and-holdings`)
+
+**New plan.** The user replaced `PLAN.md` with **Plan v3.1** (personal wealth app:
+holdings of any kind, tags, nested targets, user-built sheets of widgets; positions
+only; competing with Kubera / Snowball) and added `PRODUCT.md` (mission, users,
+principles - "if the two disagree, PRODUCT.md is the intent"). Everything below this
+entry follows v3.1; earlier entries refer to the old plan.
+
+**Rebuilt the user app from scratch** (user: "completely rebuild the accounts app,
+rename if necessary to have it be up to normal django convention"). Decisions, all
+confirmed with the user except where noted:
+
+- **`accounts` → `users`**, because v3.1 also has `portfolios.Account` (brokerage
+  accounts); `accounts.User` beside `portfolios.Account` would confuse. PLAN.md §3
+  updated to say `users`. **`holdings` → `portfolios`** to match the plan.
+- **Dev DB reset** (approved): changing the user model's app label needs fresh
+  migrations. Old `accounts` / `holdings` code and migrations deleted, not ported;
+  `users/0001` + `0002_seed_free_plan`, `portfolios/0001`.
+- **Extras beyond PLAN step 1 - user said "do whatever you think is best"; kept all
+  four**, citing PRODUCT.md's "private by design" and "security as a feature": email
+  verification, change email, **delete account (now a real delete** - user, profile,
+  subscription, portfolio cascade; the audit row survives with the email), security log
+  + log-out-everywhere. Self-service *deactivate* was dropped in favour of delete; staff
+  can still deactivate/reactivate in admin.
+- **Tiers now follow v3.1 2.11:** `Plan` model (slug, name, `entitlements` JSON,
+  `is_default` - DB-constrained to one) + `Subscription` (user, plan, status, renews_at).
+  Free is seeded by a data migration; Plus/Pro are added in admin when decided.
+  `users.entitlements.entitlements(user)` is the one helper; an inactive (past due /
+  canceled) subscription falls back to the default plan. This replaces the earlier
+  code-table `tiers.py` approach - the plan asks for DB rows so plans can change in admin.
+- **No portfolio API** and the harness's Portfolio tab is gone: PLAN 2.1 says the UI
+  never mentions portfolios. The portfolio's `base_currency` follows the profile's via a
+  `post_save` receiver in `portfolios` (users can't import portfolios). Revisit if a
+  user can ever have two portfolios.
+- `SecurityEvent` gained an `email` column so failed logins for unknown emails and events
+  of deleted accounts still say who they were about.
+- Django conventions: namespaced URLs (`app_name = "users"`, `reverse("users:login")`),
+  `validators.py` (was `validation.py`), `verbose_name` on app configs, signals wired
+  in `AppConfig.ready()`, a `raw` guard on post_save receivers.
+- Dependency-rule test rewritten for v3.1's graph (`users ← portfolios ← assets ← tags ←
+  targets ← sheets`; `history` / `imports` beside `assets`; `marketdata` imports nothing)
+  plus a check that any new app is added to the rule.
+
+**Verified:** 83 tests pass (written fresh, covering the old suite's cases plus plans,
+entitlements, account deletion, email-change race, token expiry); `check --deploy`
+clean; live HTTP smoke test (register → login → me → change currency → security events →
+delete with wrong / right password → session gone, login refused, audit row kept);
+frontend lints and builds. Dev DB re-seeded with `seed_users`; **no superuser yet** on
+this machine - run `createsuperuser`.
+
+Also: Pylance flagged `Import "django.conf" could not be resolved` - VS Code wasn't
+using `backend\.venv` and didn't know `backend/` is the import root. Fixed with a local
+(gitignored) `.vscode/settings.json`; the settings are in the environment table above
+so the other machine can copy them.

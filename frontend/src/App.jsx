@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { ensureCsrfCookie, fetchMe } from "./api.js";
 import ForgotPasswordScreen from "./ForgotPasswordScreen.jsx";
 import LoginScreen from "./LoginScreen.jsx";
-import PortfolioScreen from "./PortfolioScreen.jsx";
 import RegisterScreen from "./RegisterScreen.jsx";
 import ResetPasswordScreen from "./ResetPasswordScreen.jsx";
 import SettingsScreen from "./SettingsScreen.jsx";
@@ -30,8 +29,6 @@ export default function App() {
   const [emailLink, setEmailLink] = useState(readEmailLink);
   // Which logged-out screen: "login" | "register" | "forgot".
   const [screen, setScreen] = useState("login");
-  // Which logged-in screen: "portfolio" | "settings".
-  const [tab, setTab] = useState("portfolio");
 
   const refreshMe = useCallback(async () => {
     try {
@@ -73,7 +70,6 @@ export default function App() {
   function handleLoggedOut() {
     setMe(null);
     setScreen("login");
-    setTab("portfolio");
   }
 
   if (loading) return <p>Loading...</p>;
@@ -95,24 +91,9 @@ export default function App() {
   }
 
   if (me) {
-    return (
-      <div>
-        <nav>
-          <button type="button" onClick={() => setTab("portfolio")} disabled={tab === "portfolio"}>
-            Portfolio
-          </button>{" "}
-          <button type="button" onClick={() => setTab("settings")} disabled={tab === "settings"}>
-            Settings
-          </button>{" "}
-          <span>Signed in as {me.email}</span>
-        </nav>
-        {tab === "portfolio" ? (
-          <PortfolioScreen />
-        ) : (
-          <SettingsScreen me={me} onUpdated={setMe} onLoggedOut={handleLoggedOut} />
-        )}
-      </div>
-    );
+    // Only settings for now; holdings screens arrive with the real frontend
+    // (PLAN.md step 10). Portfolios are never shown (PLAN.md 2.1).
+    return <SettingsScreen me={me} onUpdated={setMe} onLoggedOut={handleLoggedOut} />;
   }
 
   if (screen === "register") {

@@ -1,415 +1,227 @@
-# Portfolio Dashboard — Plan (v2: backend first)
+# Personal Wealth App — Plan v3.1
 
-## Context
+## 1. What we are building
 
-The first version of this app grew too complex and was abandoned. This is a deliberate restart: a system where someone can view and manage holdings (not trade) across fully user-defined asset types (stocks, crypto, physical gold, collectibles, vehicles, private businesses), and see whether their allocation targets and themes are being met.
+A personal asset and portfolio manager for **individuals**, built to compete with Kubera and Snowball Analytics.
 
-**Direction change in v2 of this plan:** the work is now **backend first**. Django is the product for now; Django admin is the working interface; the React app is kept as a thin skeleton and only catches up later. The plan is therefore split into two parts:
+A person signs up, records everything they own (stocks, ETFs, bonds, crypto, real estate, physical gold, watches, cards — anything), organises it with their own tags, sets their own targets, and builds their own summary **sheets** out of **widgets**.
 
-- **Part 1 — Backend (Django + DRF):** where all new work happens.
-- **Part 2 — Frontend (React):** what exists, frozen, plus what it will need later.
+**What sets it apart**
 
-Guardrails carried over from v1, still in force:
+1. **Sheets** — users build their own summary pages from widgets: a main dashboard, a "Dashboard v2", a non-investment sheet, a sheet per theme. Nobody else in this space lets people lay out their own views like a spreadsheet.
+2. **Targets** — their own allocation goals, nested (net worth plan → investment themes), with drift and how much to add or trim.
+3. **Tags** — their own way of classifying anything they hold.
 
-1. **No special "Dashboard" page type.** The only top-level page concept is `Page`, a generic container of widgets. Templates are just pages with `is_template=True`.
-2. **Portfolio is the container above everything.** One retail user usually has one portfolio; an advisor may have many. Everything a user owns hangs off a `Portfolio`.
-3. **Scope stays tight.** No brokerage linking, no trading, no advice. Manual entry, CSV import and price data only.
-4. Money and quantity fields are `DecimalField`, never floats.
+**In scope**
 
-Stack: Django + DRF, SQLite in dev, React SPA (Vite). Project at `C:\Users\Josh\Desktop\portfolio-dashboard`. Python 3.12, Node 22.17.
+- One kind of user: an individual. No advisors, clients or sharing.
+- Free tier plus one or two paid tiers.
+- Holdings of any kind, standard or user-defined.
+- **Positions only**: each holding records quantity, average cost and current price. No buy/sell/dividend history.
+- **CSV import** of positions first; live account sync later.
+- Live prices from FMP (after the core works).
 
----
+**Out of scope (for now)**
 
-# Part 1 — Backend
+- Advisors, clients, sharing.
+- Transaction history, realized gains, time-weighted returns.
+- Trading or giving advice.
+- User-designed widget types (users configure our widgets; they don't invent new ones).
 
-## 1.1 App layout and dependency rule
+**Ground rules**
 
-```
-backend/
-  config/       settings, urls
-  accounts/     User, Profile, SecurityEvent, auth endpoints   (NEW – build first)
-  holdings/     Portfolio, PortfolioAccess, Account, AssetClass, Asset, AssetField, Transaction, ValueSnapshot
-  marketdata/   Security, Price, FxRate, FMP client   (NEW)
-  targets/      AllocationNode (theme tree), Assignment, drift maths   (NEW)
-  layouts/      Page, Widget, widget computation
-```
+- Build step by step; each step is usable and tested before the next starts.
+- Backend first (Django + DRF); Django admin is the working interface until the frontend step.
+- Money and quantities are `DecimalField`, never floats.
+- **Complexity guardrail for sheets:** a small set of well-made widgets, each with a short config. New capability comes from adding a widget type, never from adding options to every widget.
 
-Apps are split by **what the data means**, never by page type.
+## 2. Key decisions
 
-**Dependencies run one way only:**
+### 2.1 One portfolio per user — yes, but invisible
 
-```
-accounts  ←  holdings  ←  targets  ←  layouts
-marketdata ←  holdings
-```
+Every user gets exactly one `Portfolio`, created automatically at sign-up. Everything they own hangs off the portfolio, not the user.
 
-- `accounts` and `marketdata` import from nothing else in the project.
-- `holdings` may import `accounts` and `marketdata`.
-- `targets` may import `holdings`.
-- `layouts` may import everything; nothing imports `layouts`.
+- **Why:** almost free now, and later features become additive: export or delete as one unit, a second portfolio as a paid perk, a "what-if" portfolio.
+- **Rule:** the UI never mentions portfolios until a feature needs more than one.
 
-Add a test that fails if these rules are broken (grep the import lines).
+### 2.2 Holdings: positions with average cost
 
-## 1.2 Can Django admin run all of this?
+Every holding works the same way, whether it's COAL or a watch:
 
-**Yes for now, no for real users.**
-
-- **Use admin as the whole interface during the backend phase.** Every model is registered, with list filters, search, inlines (assets inside an account, transactions inside an asset, child nodes inside a theme) and admin actions (refresh prices, take snapshot, run import). This lets the data model be proven without writing any React.
-- **Do not plan on admin being the product.** Admin assumes trusted staff. Limiting each user to their own rows means overriding `get_queryset`, `formfield_for_foreignkey` and permissions on every model, and the result is still a database editor, not a simple investing app. Customers get the API + frontend; admin stays your operator console.
-- Practical rule: only `is_staff` users can log in to admin. Ordinary users never see it.
-
-## 1.3 Step B1 — Users, profiles and account security (do this first)
-
-Nothing else is built until this step is complete and tested. It has four parts: models, account endpoints, protections, and admin.
-
-### B1.1 Models
-
-**Custom user model from day one.** Changing `AUTH_USER_MODEL` after migrations exist is painful, and v1 already ran migrations against Django's default user. Since the dev database only holds seed data, the clean route is: delete `db.sqlite3` and the existing migration files, add `accounts`, set `AUTH_USER_MODEL = "accounts.User"`, re-run `makemigrations` / `migrate` / `seed_demo`.
-
-`accounts` app:
-
-- `User(AbstractBaseUser, PermissionsMixin)` with a custom `UserManager` (`create_user`, `create_superuser`):
-  - `email` (unique, stored lower-cased, `USERNAME_FIELD = "email"`), no username field;
-  - `is_active`, `is_staff`, `is_superuser`, `date_joined`, `last_login`;
-  - `email_verified_at` (nullable), `password_changed_at`.
-- `Profile`: `user` (OneToOne), `display_name`, `base_currency` (default `CAD`), `timezone` (default `America/Toronto`), `created_at`, `updated_at`. Created automatically by a `post_save` signal on `User`. (*A `role` field — `individual` | `advisor` — was built and then removed on 2026-11-17: the app is individual-only for now. Re-add it with the advisor work, B9.*)
-- `holdings.Portfolio.owner` → FK to `settings.AUTH_USER_MODEL` (required, `PROTECT`). Add `Portfolio.base_currency`.
-- `holdings.PortfolioAccess` (see 1.4) — the table is created in this step so every portfolio has an owner row from the start. *(Removed 2026-11-17 — deferred to sharing, B9.)*
-- On sign-up, one default `Portfolio` is created for the user, and the starter template pages are duplicated into it.
-- *As built:* the three bullets above landed in **B2**, not B1 — `accounts` may not import other project apps, so the sign-up receiver lives in `holdings`. Duplicating starter template pages waits for `layouts`.
-- Templates stay unowned (`Page.portfolio = None`, `is_template = True`).
-
-### B1.2 Account endpoints
-
-All under `/api/auth/`. Session authentication (cookie) to start; token/JWT can be added later without model changes.
-
-| Endpoint | Purpose | Notes |
-|---|---|---|
-| `GET csrf/` | Hand the SPA a CSRF cookie | Called once on load |
-| `POST register/` | Create account | Email + password (+ display name). Runs password validators. Sends verification email. Same response whether or not the email already exists |
-| `POST verify-email/` | Confirm email | Signed, single-use, time-limited token |
-| `POST resend-verification/` | Send the email again | Throttled |
-| `POST login/` | Start session | Generic error ("email or password is incorrect"). Rotates the session key on success |
-| `POST logout/` | End session | |
-| `POST logout-all/` | Log out everywhere | `keep_current: true` ends only the *other* sessions. No password needed (only removes access) |
-| `GET/PATCH me/` | Read / update user + profile | Email is not changed here. Timezone must be a valid IANA zone |
-| `GET options/` | Profile form choices | Currencies and timezones - so the frontend never hard-codes them. Public |
-| `GET security-events/` | Own recent security activity | Last 50 `SecurityEvent`s for the caller, newest first (logins, failed attempts, password/email changes) |
-| `POST password/change/` | Change password while logged in | Requires current password. Keeps this session, ends all others |
-| `POST password/reset/` | Request reset email | Always returns 200 (no account enumeration) |
-| `POST password/reset/confirm/` | Set new password from emailed link | Django's `PasswordResetTokenGenerator` (single-use, expires). Ends all sessions |
-| `POST email/change/` | Change email | Requires current password; new address must be verified before it takes effect; notice sent to the old address |
-| `POST deactivate/` | Close account | Requires current password; sets `is_active=False` (soft). Hard delete is an admin action |
-
-Emails use Django's console email backend in development, a real provider later.
-
-### B1.3 Protections
-
-Passwords:
-
-- Hashing: Argon2 first in `PASSWORD_HASHERS` (`argon2-cffi`), PBKDF2 kept as fallback.
-- `AUTH_PASSWORD_VALIDATORS`: minimum length 12, common-password list, similarity to email/name, not entirely numeric.
-- Passwords are never logged, never returned by any serializer, and never sent by email.
-- Changing or resetting a password invalidates other sessions (`update_session_auth_hash` for the current one).
-
-Sign-in abuse:
-
-- DRF throttles with their own scopes: `login`, `register`, `password_reset`, `resend_verification` (for example 5/min per IP and 10/hour per account).
-- Lockout after repeated failures by account + IP (`django-axes`), with a cool-off period and an admin unlock action.
-- Login, reset and register responses do not reveal whether an email is registered.
-- Tokens (verification, reset) are single-use and expire (`PASSWORD_RESET_TIMEOUT` about 1 hour).
-
-Sessions and transport (production settings; relaxed only in `settings/dev.py`):
-
-- `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`, `SESSION_COOKIE_HTTPONLY`, `SESSION_COOKIE_SAMESITE = "Lax"`.
-- `SECURE_SSL_REDIRECT`, `SECURE_HSTS_SECONDS`, `SECURE_CONTENT_TYPE_NOSNIFF`, `X_FRAME_OPTIONS = "DENY"`.
-- CSRF protection stays on for every session-authenticated write. `CSRF_TRUSTED_ORIGINS` and `CORS_ALLOWED_ORIGINS` list the frontend origin only; `CORS_ALLOW_CREDENTIALS = True`; never `CORS_ALLOW_ALL_ORIGINS`.
-- Session expiry set (for example 14 days sliding), and a "log out everywhere" action.
-
-Configuration:
-
-- `SECRET_KEY`, `FMP_API_KEY`, email credentials and `DEBUG` come from environment variables (`.env`, not committed). `DEBUG = False` and explicit `ALLOWED_HOSTS` outside development.
-- Settings split into `base.py`, `dev.py`, `prod.py`. `manage.py check --deploy` must pass against `prod.py`.
-
-Access rules:
-
-- Default DRF permission is `IsAuthenticated`; only the auth endpoints above are public.
-- Unverified users can log in but cannot be granted access to someone else's portfolio until verified.
-- Inactive users cannot log in or use the API.
-
-Audit:
-
-- `accounts.SecurityEvent`: `user` (nullable), `event` (`register`, `login`, `login_failed`, `logout`, `password_changed`, `password_reset_requested`, `password_reset_done`, `email_changed`, `deactivated`, `locked`), `ip`, `user_agent`, `created_at`. Written by signals, read-only in admin.
-
-Deliberately later: two-factor authentication (TOTP), social login, breached-password check.
-
-### B1.4 Django admin for users
-
-- `UserAdmin` built on `django.contrib.auth.admin.UserAdmin`, adapted for email login:
-  - custom `UserCreationForm` / `UserChangeForm` (email + two password fields on add; hashed password shown read-only with the standard "change password" link on edit);
-  - `list_display`: email, display name, is_active, is_staff, email verified, last login, date joined;
-  - `list_filter`: is_active, is_staff, email verified; `search_fields`: email, display name; `ordering`: email;
-  - `ProfileInline` (one-to-one, cannot be deleted);
-  - read-only: last_login, date_joined, password_changed_at;
-  - actions: deactivate (also ends the user's sessions), reactivate, mark email verified, send password-reset email, unlock (clear lockout), end all sessions. Deactivate / reactivate / end sessions write `SecurityEvent` rows.
-- `SecurityEventAdmin`: read-only list, filter by event and date, search by email and IP. No add/change/delete.
-- `PortfolioAdmin` shows the owner (and, once sharing exists, an inline of who has access).
-- Only `is_staff` users can sign in to admin. Admin passwords are never set or shown in plain text; admins trigger a reset email instead.
-- Outside development: admin served at a non-default path, and staff accounts are the first to get two-factor when it is added.
-- `createsuperuser` works with email only.
-
-### B1.5 Done when
-
-- A user can register, verify, log in, change password, reset a forgotten password, change email, log out and deactivate — each covered by a test.
-- Tests also prove: weak passwords rejected; wrong current password rejected; reset token cannot be reused or used after expiry; other sessions end on password change; repeated bad logins lock out; throttles return 429; responses do not reveal whether an email exists; inactive users are refused.
-- Two users created in admin each get a profile and a default portfolio.
-- `manage.py check --deploy` passes with production settings.
-- `seed_demo --user <email>` fills one user's portfolio.
-
-## 1.3a Tiers (structure built 2026-11-17; limits undecided)
-
-There will be pricing tiers — **Free** and **Paid** to start, possibly a middle tier later. Undecided: how many tiers, what each costs, and what each unlocks.
-
-Built now (structure only, so later decisions are small changes):
-
-- `accounts.Subscription` — one per user, `tier` (`free` | `paid`), created at signup alongside the Profile; existing users backfilled to Free. Adding a tier = one more choice.
-- Staff set tiers in admin (inline on the user, list column + filter, "Set tier" actions). **No payment provider yet**; when billing comes (Stripe or similar), its fields — customer/subscription ids, status, current period end — go on this same model, and a webhook sets `tier`.
-- `GET me/` returns `tier`, read-only.
-- `accounts/tiers.py` is the **only** place limits live: `TIER_LIMITS = {tier: {feature_key: limit}}` where a limit is a bool, an int cap, or `None` (unlimited); features call `limit(user, key)` / `allows(user, key)` and never compare tier names. A test asserts every tier defines the same keys. **Nothing is gated yet.**
-
-Candidate gates to decide as each feature lands (not commitments): number of assets / accounts / asset types (B2.5), automatic price updates vs manual values (B3), number of themes (B4), length of value history (B6), CSV import (B7), sharing (B9). Each is one key in `TIER_LIMITS` plus one check in the feature.
-
-Rule for downgrades (decide before the first gate ships): going Paid → Free should never delete data — over-limit items become read-only, not removed.
-
-## 1.4 Step B2 — Portfolio ownership and scoping
-
-**Ownership model (decided 2026-11-17).** Every portfolio has exactly one owner, and for now only the owner can see or change it.
-
-**Now — individuals only:** every user owns **exactly one** portfolio, created at signup and living as long as the account. The API has no create or delete. Grouping inside it uses accounts (where held), asset types (what it is) and themes (what it's for) — never extra portfolios. The whole app is built out for this single-portfolio individual first.
-
-**Future idea — advisors (explored 2026-11-17, built, then removed to keep scope on the individual; see LOG.md):** an advisor creates `Client` records (name, email, phone, notes), each with exactly one portfolio **owned by the advisor**; clients don't log in, or later log in purely to **view** (a viewer row). Client data belongs to the advisor. The advisor's own signup portfolio would be locked. Needs `Profile.role` back. Details in B9.
-
-Scoping (written once, used everywhere):
-
-- **One function decides access:** `holdings.access.accessible_portfolios(user)` — today simply "portfolios you own" (empty for anonymous or inactive users). Every endpoint over portfolios, and over anything inside one, builds its queryset from it; child models filter through `portfolio__in=accessible_portfolios(user)`. No view ever filters on `owner` itself.
-- Objects outside the user's access return **404**, not 403 — they're simply not in the queryset.
-- Writes validate that any referenced portfolio / account / asset class / node belongs to a portfolio the user can access.
-- **Sharing later (B9) is a change inside that one function**, plus a `PortfolioAccess` table (portfolio, user, role `owner` | `manager` | `viewer`, status, granted_by, dates) and a role check for writes. That table was built in the first B2 pass and **removed 2026-11-17** — with one owner per portfolio and no sharing, it only duplicated `Portfolio.owner`.
-
-**Tests that matter most:** user A cannot list, read, edit or duplicate into anything of user B; anonymous and inactive users see nothing.
-
-**As built (B2):** `holdings` app with `Portfolio` (`owner`, `name`, `base_currency`, timestamps) and `holdings/access.py`.
-
-- Signup creates the user's portfolio (`holdings/signals.py`, via `services.create_portfolio`), in their profile currency.
-- `/api/portfolios/` — list / retrieve / PATCH (rename, base currency). No create or delete. Staff can still create/delete in admin.
-- Admin: portfolio list; owner fixed after creation.
-- Data migration backfilled a portfolio for users created before `holdings` existed.
-- No DB unique constraint on `Portfolio.owner` — deliberately, since future advisors would own many.
-- `v1`'s `summary_metrics` field was not carried over — it's a display setting that belongs with `layouts`.
-
-## 1.5 Step B3 — Market data (`marketdata`, FMP)
-
-Purpose: prices, names and FX for listed holdings, so values are not typed by hand. Manual assets (gold bars, a car, a private business) keep working with no security attached.
-
-Models:
-
-- `Security`: `symbol`, `exchange`, `name`, `currency`, `security_type` (stock / etf / crypto / fx / commodity), `provider_symbol`, `last_price`, `last_price_at`, `dividend_yield` (nullable), `is_active`. Unique on (`symbol`, `exchange`).
-- `Price`: `security`, `date`, `close`. Unique on (`security`, `date`).
-- `FxRate`: `base`, `quote`, `date`, `rate`. Unique on (`base`, `quote`, `date`).
-
-Link: `Asset.security` nullable FK. `Asset.currency` added. Rule for value:
-
-- security linked → value = quantity × latest price × FX to the portfolio's base currency;
-- no security → the manually entered `current_value` is used.
-
-FMP client (`marketdata/providers/fmp.py`):
-
-- One small class behind a provider interface (`get_quote`, `get_history`, `get_fx`, `search`), so FMP can be swapped or supplemented later.
-- API key from the environment (`FMP_API_KEY`), never in the repo.
-- All calls go through one function with timeout, retry and a daily request counter.
-- Prices are **stored**, and the app reads from the database. Nothing calls FMP during a page request.
-- Check before building on it: FMP's current endpoint paths and plan limits, and whether your plan covers TSX-listed symbols and the metals/crypto quotes you want. Coverage and rate limits vary by plan.
-
-Jobs (management commands first, scheduler later):
-
-- `sync_prices` — latest quote for every active `Security` in use.
-- `backfill_prices --symbol X --from YYYY-MM-DD`.
-- `sync_fx` — rates for each currency pair in use.
-- Admin action "Refresh price" on `Security`.
-
-Run them by hand or with Windows Task Scheduler / cron. Add Celery only if this becomes a hosted product.
-
-## 1.6 Step B4 — Targets and themes (`targets`) — the core feature
-
-A tree of allocation nodes per portfolio, each with a target, and holdings assigned to leaves.
-
-- `AllocationNode`: `portfolio`, `parent` (nullable self-FK), `name`, `target_percent` (of its parent), `color`, `sort_order`, `kind` (`category` | `theme` | `position`). Top level might be Investments / Gold / Silver / Bitcoin / Cash; under Investments the themes (Coal, Shipping…); under a theme, sub-themes or positions.
-- `Assignment`: `node`, `asset`, `weight` (default 1.0). One asset may be split across nodes; weights for an asset must not exceed 1.
-- Optional per-node `target_amount` for fixed-dollar goals (e.g. a down-payment fund).
-
-Computation lives in `targets/drift.py` as pure functions, returning for each node: actual value, actual % (of parent and of portfolio), target %, target value, drift, and amount to add or trim. Plus:
-
-- an **Unallocated** bucket at each level (target not handed to a child, and holdings not assigned to any node);
-- a validation report (children's targets do not sum to 100%, asset over-assigned).
-
-API: `/api/allocation-nodes/` (CRUD, reorder), `/api/assignments/`, `GET /api/portfolios/<id>/drift/` (the whole tree, computed).
-
-Admin: `AllocationNode` with children and assignments inline; a read-only "Drift" admin view is a cheap way to see results before any frontend exists.
-
-## 1.7 Step B5 — Transactions and income
-
-- `Transaction`: `portfolio`, `account`, `asset` (nullable for pure cash movements), `type` (`buy`, `sell`, `dividend`, `interest`, `fee`, `deposit`, `withdrawal`, `split`, `adjustment`), `date`, `quantity`, `price`, `amount`, `currency`, `fx_rate`, `note`, `import_batch` (nullable).
-- For assets **with** transactions, quantity and cost basis are derived (average cost) and cached on `Asset` by a `recalculate_position()` service. For assets **without** transactions, the manual fields remain the source of truth. This keeps simple manual tracking simple.
-- Derived figures: realized gain, income received (by year, by asset, by account), projected annual income (yield × value).
-
-## 1.8 Step B6 — Value history
-
-- `ValueSnapshot`: `portfolio`, `date`, `total_value`, `investment_value`, `net_deposits`. Optional `AssetSnapshot` (asset, date, quantity, value) if per-holding history is wanted.
-- `take_snapshots` command, run daily after `sync_prices`.
-- Enables net-worth-over-time and a deposit-adjusted return (Modified Dietz to start).
-
-## 1.9 Step B7 — CSV import
-
-- `ImportBatch`: `portfolio`, `account`, `source` (`ibkr`, `wealthsimple`, `generic`), `file`, `status`, `summary` (JSON), `created_at`.
-- Flow: upload → parse with a per-source parser → match rows to assets by `identifier` → produce a diff (new / changed / missing) → apply on confirm.
-- Two kinds: **positions** (snapshot of holdings) and **transactions** (activity).
-- Generic columns: `identifier` (required), `name`, `quantity` (required), `current_value`, `cost_basis`, `currency`.
-- First version runs from admin (upload on the `ImportBatch` form, "Apply" action).
-
-## 1.10 Step B9 — Sharing and manager accounts (later)
-
-Built only after individuals are using the product. Adds the `PortfolioAccess` table (see B2's scoping notes) and extends `holdings.access.accessible_portfolios` to include shared portfolios, plus a role check for writes.
-
-- `PortfolioInvitation`: `portfolio`, `email`, `role`, `token` (signed, single-use, expires), `invited_by`, `status` (`pending` | `accepted` | `declined` | `expired` | `cancelled`), dates.
-- **Advisors and clients:** bring back `Profile.role` (`individual` | `advisor`, staff-set). An advisor creates `Client` records (name, email, phone, notes), each with exactly one portfolio **owned by the advisor**; the advisor's own signup portfolio is locked; client data belongs to the advisor. (This was built once on 2026-11-17 — `holdings.Client`, `Portfolio.client` one-to-one, `/api/clients/`, `access.usable_portfolios` hiding the locked portfolio — then removed to focus on individuals; LOG.md has the design notes.)
-- **Client can log in to view:** the advisor invites the client's email as a **viewer** of that portfolio, and the accepted login is linked to the `Client` record. The client accepts — signing up through the invitation if they have no account — and from then on logs in to see it. **No ownership transfer, no "claim" step.**
-- An invited client who signs up through the invitation should **not** also get an empty default portfolio (the B2 signup receiver must skip invite signups). Decide then whether such a client may later start their own personal portfolio.
-- **Owner invites a helper:** any owner (individual or advisor) can also invite someone as `viewer` or `manager` — e.g. a spouse, an accountant, an assistant at the advisor's practice.
-- Every invitation needs explicit acceptance by a verified user. Owners see a list of who has access and can revoke in one action. Viewers/managers can leave a portfolio.
-- Advisor view: `GET /api/clients/` — every client portfolio the advisor owns or manages, with summary figures and who has viewer access. Templates, pages and theme trees can be duplicated across those portfolios.
-- Firms grouping several advisors: see **B10 — Organizations** below (replaces the earlier one-line `Practice` idea).
-- Audit: `PortfolioAuditLog` (portfolio, user, action, object, before/after, timestamp) for changes made by anyone other than the owner, visible to the owner.
-- Before real client data is involved: privacy review (consent wording, data export, deletion), and keep the product positioned as tracking and reporting, not a manager's regulatory system of record.
-
-## 1.11 Step B10 — Organizations (later, after B9)
-
-An organization is a firm (advisory practice, family office) that groups advisors. Its **owner can see every advisor in the org and every client portfolio those advisors own.** Built on top of B9's advisor model, not instead of it: advisors own their clients' portfolios, clients are viewers, and access still flows through `holdings/access.py`.
-
-New app `organizations`, slotted into the dependency rule as `accounts ← organizations ← holdings` (update the import-rule test when it lands).
-
-- `Organization`: `name`, `owner` (FK user, `PROTECT`), `created_at`.
-- `OrganizationMembership`: `organization`, `user`, `role` (`owner` | `admin` | `advisor`), `status` (`invited` | `active` | `removed`), `invited_by`, dates. Unique on (`organization`, `user`); exactly one active `owner`, kept in step with `Organization.owner`. Joining requires explicit acceptance by a verified user, like B9 invitations.
-- `Portfolio.organization` (nullable FK): set on an advisor's client portfolio that belongs to the firm's book. The client sees the org's name on their invitation.
-
-| Org role | See advisors | See org clients | Edit client portfolios | Manage members |
-|---|---|---|---|---|
-| Owner | all | all, read-only | only portfolios they own or manage | yes; transfer ownership; close org |
-| Admin | all | all, read-only | only portfolios they own or manage | invite / remove advisors |
-| Advisor | — | their own clients | yes (they own them) | no |
-
-Rules:
-
-- **Scoping:** `accessible_portfolios()` (B2) gains one more source: portfolios whose `organization` is one where the user is an active owner/admin. Org-derived access is **read-only**; writes still need a direct `owner`/`manager` row.
-- **Advisor leaves:** their org-tagged client portfolios are **transferred** to another advisor in the org (owner/admin action — the one place ownership changes hands), so the client keeps service and keeps their viewer row. Untagged portfolios (the advisor's personal book) leave with the advisor.
-- **Client leaves:** the owning advisor (or an org admin) revokes the client's viewer row. The data stays with the advisor/firm, per B9's ownership model.
-- **Audit:** org-level views of a client portfolio are recorded in `PortfolioAuditLog`.
-- **API:** `GET /api/orgs/<id>/advisors/` (with client counts and summary figures), `GET /api/orgs/<id>/clients/?advisor=<id>`, membership invite / accept / remove, and portfolio transfer between org advisors.
-- **Tests that matter most:** an org owner sees exactly their org's tagged portfolios, never another org's or an advisor's personal book; org access cannot write; transferring a departing advisor's portfolios keeps data and client viewer rows intact.
-
-Open questions (decide when B10 starts, not now): can an advisor belong to more than one org (start with one); should owners be able to edit, or only view (start view-only); per-seat billing (out of scope).
-
-## 1.12 Holdings and layouts design (from v1 — NOT built in this repo)
-
-> **Correction (2026-11-17):** none of the code described in this section exists. This repo was started fresh; the only app built is `accounts`. Treat what follows as the *design* for `holdings`/`layouts`, to be built outward from users/profiles, not as code to keep.
-
-`holdings`:
-
-- `Portfolio`: name, created_at, `summary_metrics` (ordered list of 1–5 keys: `net_worth`, `investments`, `personal`, `cost_basis`, `unrealized_gain`, `total_return`, `holdings`, `type:<id>`).
-- `Account`: portfolio, name, kind (brokerage / retirement / managed / bank / crypto / physical / other), institution, sort_order. `Asset.account` is nullable (`SET_NULL`): deleting an account keeps its holdings.
-- `AssetClass`: portfolio, name, color, icon, sort_order, `is_investment` (default true).
-- `Asset`: asset_class, account, name, identifier, quantity, current_value, cost_basis (nullable), custom_fields (JSON), `investment_override` (`''` | `investment` | `personal`).
-- `AssetField`: asset_class, name, key (fixed at creation), options[], sort_order. Values live in `Asset.custom_fields[key]`. `rename_option` / `remove_option` rewrite values on every asset.
-- **Type vs account:** a type is what something is; an account is where it is held.
-- Gain/loss only counts assets that have a cost basis.
-
-`layouts`:
-
-- `Page`: portfolio (nullable), name, slug, sort_order, is_template.
-- `Widget`: page, widget_type (`metric_tile`, `table`, `allocation_breakdown`, `chart`, `note`), x/y/w/h, title, config (JSON).
-- `layouts/widgets.py`: pure functions `(queryset, config) -> value`, one per widget type. Supports `asset_class_filter` (ids or names), `field_filter`, `holdings_filter` (`investments` | `personal`), `group_by` (`asset_class` | `account` | `field:<key>`), table `sort_by` / `sort_dir` / `limit`, metric `variant` and `context`.
-- Colors: validated colorblind-safe palette (`FALLBACK_COLORS`), keyed to the class, more than 8 slices fold into "Other".
-
-API (existing): `/api/portfolios/`, `/api/accounts/`, `/api/asset-classes/` (+ `reorder/`), `/api/assets/`, `/api/pages/` (+ `<id>/data/`, `<id>/duplicate/`, `<id>/layout/`), `/api/widgets/`, `/api/widget-types/`.
-
-**Follow-ups to existing code once B1–B6 land:**
-
-- Add `group_by: "node"` and a `drift` widget type in `layouts` that read from `targets`.
-- Widget values use the security-priced value when an asset has a security.
-- `seed_demo` takes `--user`, and seeds a small theme tree, a few securities and transactions.
-
-## 1.13 Backend build order
-
-Each step is runnable and testable on its own, entirely through admin and tests.
-
-| Step | What | Done when |
-|---|---|---|
-| **B1** | `accounts`: custom User, Profile, register / login / password change and reset / email change / deactivate, protections, user admin | All account flows and protection tests pass; `check --deploy` clean |
-| **B1a** | Tiers: `Subscription` (Free / Paid), staff-set, `tiers.py` limit table — structure only (§1.3a) | Built; limits filled in per feature |
-| **B2** | One `Portfolio` per user (created at signup); owner-only scoping through `holdings/access.py` on every endpoint | Cross-user tests pass |
-| **B2.5** | What's inside a portfolio: `Account`, `AssetClass`, `AssetField`, `Asset` (design in §1.12), each scoped through `holdings/access.accessible_portfolios` | CRUD + admin for each; cross-user tests extended to every model; nothing can reference another portfolio's account/class |
-| **B3** | `marketdata` + FMP client + `sync_prices` | A linked asset's value updates from a stored price |
-| **B4** | `targets`: node tree, assignments, drift | `/drift/` returns correct numbers for a fixture tree |
-| **B5** | Transactions, derived positions, income | Buy/sell/dividend fixtures give expected quantity, cost, income |
-| **B6** | Snapshots + return | Daily snapshot rows; Modified Dietz test passes |
-| **B7** | CSV import (IBKR first) | An IBKR positions file imports with a correct diff |
-| **B8** | Hardening | Import-rule test, API docs (drf-spectacular) |
-| **B9** | Sharing + manager accounts (later) | Invite, accept, revoke and claim flows tested; manager client list |
-| **B10** | Organizations (later, after B9) | Org owner sees all advisors and their org clients, read-only; advisor departure reassigns clients; cross-org isolation tests pass |
-
-## 1.14 Backend verification
-
-- `manage.py test` for: widget functions, drift maths, position recalculation, FX conversion, ownership scoping, import diffing.
-- FMP client tested against recorded responses (no live calls in tests).
-- Nothing in `holdings/` imports `targets/` or `layouts/`; nothing in `accounts/` or `marketdata/` imports project apps.
-
----
-
-# Part 2 — Frontend
-
-**Status: frozen as a skeleton.** No new frontend features until the backend steps above are done. Only changes needed to keep it working against the new backend are allowed.
-
-## 2.1 v1 frontend design (NOT built in this repo)
-
-> **Correction (2026-11-17):** none of this exists. The only frontend is the unstyled `frontend/` auth harness (see LOG.md). Kept as the design target for later.
-
-- Vite + React, `react-grid-layout` for the widget grid, `recharts` for charts, Inter bundled locally, `lucide-react` icons.
-- Page switcher listing the portfolio's pages uniformly. "New Page": blank or copy from a template.
-- `PageView`: fetches `/api/pages/<id>/data/`, maps `widget_type` → component (`MetricTile`, `DataTable`, `AllocationBreakdown`, `AllocationChart`, `Note`).
-- Edit mode: drag/resize, batch save to `/layout/`, "Add widget" modal driven by `/api/widget-types/`.
-- **Assets screen** (not a `Page`): one list, two views — by type (`#/assets`) or by account (`#/accounts`); filter chips; each group is a card with Add and a ⋯ menu; short rows (monogram, name, one detail line, value, gain/loss, of total); sortable.
-- Add/edit asset form with account and field inputs, inline "+ New account…", live gain/loss preview.
-- Field management dialog per type; widget config "Break down by" and "Only include".
-- Investments vs personal toggles; customizable summary bar (1–5 metrics).
-- Visual design "Keelstone" (placeholder brand): tokens at the top of `styles.css`; every text color clears 4.5:1 contrast; brand color for interface chrome only, charts use the validated palette; 12-column grid, 56px rows, 16px gaps.
-
-## 2.2 Minimum changes forced by the backend work
-
-| Backend step | Frontend change (smallest possible) |
+| Field | Meaning |
 |---|---|
-| B1 | Register, verify-email, login, forgot-password and reset-password screens; change password / email in a basic settings page; send session cookie + CSRF token; log out |
-| B2 | Load the portfolios the user has access to instead of the hard-coded one; hide edit controls for viewers |
-| B3 | Show "priced automatically" vs "manual value" on a holding; optional symbol search when adding a listed asset |
-| B4 | None required (drift can be viewed in admin). Later: the Targets screen below |
+| `quantity` | Units held (1 for a house or a watch) |
+| `avg_cost` | Average purchase price per unit (optional) |
+| `current_price` | Price per unit: from the instrument when priced automatically, otherwise typed in by the user |
+| *value* | `quantity × current_price` (calculated) |
+| *cost basis* | `quantity × avg_cost` (calculated) |
+| *unrealized gain* | value − cost basis, only when `avg_cost` is set |
 
-## 2.3 Later frontend work (not started, in priority order)
+- **Instrument** — a market-traded thing shared by all users (`COAL`, `AAPL`, `BTC`), priced from FMP later. A holding may point to one.
+- Holdings without an instrument (house, gold coin, private business) use a manual `current_price` and a `price_updated_at` date so the user can see how stale it is.
+- Each holding has a `currency`; totals convert to the user's base currency.
 
-1. **Targets screen** — one fixed, opinionated screen (not a widget page): the theme tree with target, actual, drift and amount to add or trim, an Unallocated row, and a form to assign holdings to themes. This is the product's main screen.
-2. **Transactions and income** — activity list per holding and account; income by year.
-3. **History** — net worth over time, return vs deposits.
-4. **CSV import UI** — upload, review diff, apply (the disabled "Import CSV · Soon" item).
-5. **Profile/settings** — display name, base currency, timezone.
-6. Known gaps: responsive shell (collapsible sidebar on phones), dark mode.
-7. Sharing and advisor features (backend step B9): "Who has access" panel with invite and revoke, accept-invitation screen, advisor's client list with a client switcher, a read-only client view, apply a template to many portfolios — only after individuals are using it.
-8. Organization views (backend step B10): advisor list, clients grouped by advisor, member invite / remove / reassign — only after B9's manager features are in use.
+**What positions-only means:** we can show value, cost, unrealized gain and projected income, but not realized gains or true return over time. Return over time comes from daily snapshots (2.8) instead.
 
-**Complexity guardrail:** the widget grid is kept but not extended. New capability arrives as fixed screens, not as more widget types and options.
+### 2.3 Asset types and custom fields
+
+- **Asset type** = what kind of thing it is. We ship standard types (Stocks & ETFs, Bonds, Cash, Crypto, Precious metals, Real estate, Vehicles, Private investment). Users can create their own (Watches, Trading cards, Jewellery).
+- Each type can carry **custom fields** (Watches → Brand, Reference, Condition).
+- A type is **investment** or **personal** by default; a holding can override it. Net worth includes both; investment figures exclude personal.
+
+### 2.4 Accounts
+
+- **Account** = where a holding is held: "IBKR TFSA", "Tangerine savings", "Home safe".
+- Optional on a holding. CSV imports go into an account.
+
+### 2.5 Tags
+
+- **Tag group** (user-defined): Sector, Theme, Region, Purpose…
+- **Tag** inside a group, optionally nested: Energy → Coal → Producers. Selecting a parent includes its children.
+- One tag per group per holding, so each group adds to 100%. Splitting a holding across tags is a possible later addition.
+
+### 2.6 Targets
+
+A **target plan** has a **base** and **lines**.
+
+- **Base**: net worth, investments, or the value of a line in another plan (how plans nest).
+- **Line**: name, goal, and what counts toward it.
+  - Goal = **percentage** of the base, **fixed amount**, or **remainder**.
+  - What counts = a tag (recommended), an asset type, or specific holdings.
+- Fixed amounts are taken first, then percentages; the remainder line gets the rest.
+- Every plan shows **Unassigned**: holdings in the base that no line claims.
+- Each line shows actual value and %, target value and %, drift, and amount to add or trim.
+- "Add a holding under a theme" in the UI applies that line's tag.
+
+Example:
+
+```
+Plan "Net worth"            base = net worth
+  Physical gold    10%      tag Asset class = Gold
+  Silver          2.5%      tag Asset class = Silver
+  Bitcoin         2.5%      holding BTC
+  Home savings  $40,000     tag Purpose = Home savings
+  Investments   remainder   tag Asset class = Investments
+
+Plan "Investment themes"    base = line "Investments"
+  Natural gas exploration 10%   tag Theme = Nat gas E&P
+  Oil production          10%   tag Theme = Oil producers
+  AI                      10%   tag Theme = AI
+  Tankers                 10%   tag Theme = Tankers
+  (Unassigned shows the other 60%)
+```
+
+### 2.7 Sheets and widgets (core feature)
+
+- **Sheet** — a named page. Everyone starts with "Dashboard"; it is not special, just the first sheet. Sheets can nest under other sheets and can be duplicated ("Dashboard v2").
+- **Sheet scope** — optional selection every widget on the sheet inherits ("only holdings tagged Personal"). This is how a sheet is linked to certain assets.
+- **Widget** — type, title, position on a grid, config. Widgets only read data; they never store holdings or values of their own.
+- **Starter templates** — a few ready-made sheets (Net worth, Investments, Income) the user can add with one click, built from the same widgets.
+
+**Selection** — the building block every widget uses: include holdings by asset type, account, tag or holding; exclude the same way.
+
+First widget types:
+
+| Widget | Shows | Example config |
+|---|---|---|
+| Value | One number from a formula of selections | "Net worth" = all; "Investable" = investments − tag Home savings |
+| Holdings list | Table of holdings in a selection | Columns, sort, top N |
+| Breakdown | Pie/bar grouped by asset type, account or a tag group | "% by Sector" within Investments |
+| Target progress | A plan's lines with drift and $ to add/trim | Plan "Investment themes" |
+| History | Value of a selection over time (from snapshots) | Net worth, last 12 months |
+| Income | Projected annual/monthly income from yields | Investments, by holding |
+| Note | Free text | |
+
+### 2.8 Value history (snapshots) — early
+
+- A daily `Snapshot` of each portfolio: net worth, investments, personal, cost basis; plus `HoldingSnapshot` (holding, date, quantity, price, value).
+- Taken by a scheduled command and after each CSV import.
+- Built early because history cannot be recreated later, especially for manually priced items.
+- Powers the History widget and "change since last month" figures.
+
+### 2.9 CSV import (before any live sync)
+
+- User picks an account, uploads a positions CSV, chooses a format: **IBKR Open Positions**, **generic**, more later.
+- Generic columns: `symbol` or `name` (required), `quantity` (required), `avg_cost`, `current_price`, `currency`, `asset_type`.
+- Match rows to existing holdings in that account by symbol (or name) → show a review: **new / changed / missing** → apply on confirm. Missing holdings can be removed or kept.
+- Tags and targets survive re-imports, because matched holdings are updated in place.
+- `ImportBatch` keeps the file, format, summary and date, so a bad import can be inspected.
+- Live sync (IBKR Flex, aggregators) is a later step built on the same review-and-apply flow.
+
+### 2.10 Income without transactions
+
+- Projected income = value × dividend/interest yield.
+- Yield comes from FMP for priced instruments; users can type a yield for anything else (savings account rate, bond coupon).
+- Shows annual and monthly figures and yield on cost. Actual received dividends are out of scope with positions-only.
+
+### 2.11 Tiers
+
+- `Plan` (Free, Plus, Pro) with **entitlements**: limits and feature flags (max holdings, max sheets, max widgets per sheet, live prices, history length, CSV import formats, sync).
+- `Subscription` on each user; everyone starts on Free. One helper, `entitlements(user)`, checked wherever a limit applies.
+- Billing (Stripe) comes last; until then plans are set in admin.
+- Working idea: Free = manual holdings, CSV import, a few sheets, short history. Paid = live prices, unlimited sheets, full history, income, later sync.
+
+### 2.12 Market data licensing — check before launch
+
+Showing FMP prices to paying users is redistribution. Personal FMP plans may not allow it; a commercial licence may be needed. Confirm the terms before charging anyone.
+
+## 3. Data model (summary)
+
+| App | Model | Key fields |
+|---|---|---|
+| `users` | `User` | email (login), is_active, is_staff, date_joined |
+| | `Profile` | user, display_name, base_currency (CAD), timezone |
+| | `Plan`, `Subscription` | entitlements (JSON); user, plan, status, renews_at |
+| `portfolios` | `Portfolio` | owner (one per user), name, base_currency |
+| | `Account` | portfolio, name, kind, institution |
+| `assets` | `AssetType` | portfolio (null = standard), name, icon, is_investment, is_priced |
+| | `AssetField` | asset_type, name, key, field_type, options |
+| | `Instrument` | symbol, exchange, name, currency, kind, last_price, last_price_at, yield (global) |
+| | `Holding` | portfolio, asset_type, account, instrument (nullable), name, symbol, quantity, avg_cost, current_price, price_updated_at, currency, yield_override, custom_fields (JSON), investment_override, notes |
+| `tags` | `TagGroup` | portfolio, name, sort_order |
+| | `Tag` | group, parent (nullable), name, color |
+| | `HoldingTag` | holding, tag (one per group per holding) |
+| `targets` | `TargetPlan` | portfolio, name, base_kind (net_worth / investments / line), base_line |
+| | `TargetLine` | plan, name, goal_kind (percent / amount / remainder), goal_value, match_kind (tag / asset_type / holdings), match fields, sort_order |
+| `history` | `Snapshot`, `HoldingSnapshot` | portfolio, date, totals; holding, date, qty, price, value |
+| `imports` | `ImportBatch` | portfolio, account, format, file, status, summary (JSON), created_at |
+| `sheets` | `Sheet` | portfolio, parent (nullable), name, scope (selection JSON), sort_order, is_template |
+| | `Widget` | sheet, widget_type, title, x, y, w, h, config (JSON) |
+| `marketdata` (later) | `Price`, `FxRate` | instrument/date/close; base/quote/date/rate |
+
+The user app is `users`, not `accounts`, so it isn't confused with `portfolios.Account` (where a holding is held).
+
+**Dependency direction:** `users` ← `portfolios` ← `assets` ← `tags` ← `targets` ← `sheets`. `history` and `imports` sit beside `assets`; `marketdata` is used by `assets`. Nothing imports `sheets`.
+
+**Calculation layer** (plain functions, most tests):
+
+- `valuation.py` — value, cost and gain of a holding, in base currency;
+- `selection.py` — resolve a selection to holdings and sum them;
+- `targets/compute.py` — plan results;
+- `sheets/widgets.py` — one function per widget type.
+
+## 4. Build steps
+
+Admin is the UI until step 10.
+
+| # | Step | Done when |
+|---|---|---|
+| 1 | **Project + users.** Django project, email login, profile, register / login / logout / password change and reset, auto-created portfolio, Free subscription, user admin. Protections: Argon2, password rules, login throttling and lockout, single-use expiring tokens, secure cookies, secrets in `.env`. | Sign-up creates user + profile + portfolio + Free plan; all auth flows tested; `check --deploy` clean |
+| 2 | **Asset types, accounts, holdings.** Standard types seeded; custom types and fields; quantity, avg cost, current price; investment vs personal; base-currency totals (manual FX rate for now). | Your own holdings entered in admin; net worth, investments, cost and gain correct in tests |
+| 3 | **CSV import.** IBKR Open Positions + generic format; review new / changed / missing; apply. | Your two IBKR files import into TFSA and FHSA accounts; re-import updates in place |
+| 4 | **Tags.** Tag groups, nested tags, one per group per holding. | Holdings tagged in admin; value-by-tag tested |
+| 5 | **Selections.** Include/exclude by type, account, tag, holding; formula of selections. | "Net worth minus Personal", "Coal % of investments" tested |
+| 6 | **Targets.** Plans, lines, nested bases, unassigned, drift. | The two-plan example computes correctly |
+| 7 | **Snapshots.** Daily snapshot command; snapshot after import. | Snapshot rows created; value-over-time function tested |
+| 8 | **Sheets + widgets API.** Sheet CRUD, nesting, duplicate, scope, widget types, one endpoint returning a sheet with computed widgets, starter templates, default Dashboard per user. | Dashboard JSON returns net worth, sector breakdown, target progress, history |
+| 9 | **Market data.** Instruments, FMP client, stored prices and yields, FX rates, `sync_prices`. Income widget. | A COAL holding revalues and shows projected income |
+| 10 | **Frontend.** Login, holdings, import, tags, targets, sheets with drag-and-drop widgets. | Usable end to end in a browser |
+| 11 | **Tiers enforced + billing.** Limits checked; Stripe checkout. | Free user hits limits; upgrade unlocks them |
+| 12 | **Live sync** (later). IBKR Flex, then an aggregator; reuses the import review flow. Two-factor login before storing broker credentials. | An IBKR account syncs positions on a schedule |
+
+## 5. Open questions
+
+1. Can a holding be split across two themes, or always one tag per group? (Plan: one, splits later.)
+2. Position-level targets inside a theme (COAL = 40% of Coal) — now or later?
+3. Free vs paid split — needed by step 11.
+4. Default base currency CAD, user-selectable — confirm.

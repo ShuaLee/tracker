@@ -22,7 +22,7 @@ SECURE_HSTS_PRELOAD = True
 
 # A real email provider, not the console backend. SMTP is the lowest common
 # denominator every provider supports; swap EMAIL_BACKEND for a
-# provider-specific one later without touching accounts/emails.py.
+# provider-specific one later without touching users/emails.py.
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = env("EMAIL_HOST", default="")
 EMAIL_PORT = env.int("EMAIL_PORT", default=587)

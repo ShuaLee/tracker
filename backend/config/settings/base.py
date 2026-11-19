@@ -60,10 +60,10 @@ INSTALLED_APPS = [
     "corsheaders",
     "axes",
     # Project
-    "accounts.apps.AccountsConfig",
-    # After accounts: its post_save receiver (creates the Profile) must run
-    # before holdings' (creates the default portfolio from the profile).
-    "holdings.apps.HoldingsConfig",
+    "users.apps.UsersConfig",
+    # After users: its post_save receiver (creates the Profile) must run
+    # before portfolios' (creates the portfolio in the profile's currency).
+    "portfolios.apps.PortfoliosConfig",
 ]
 
 MIDDLEWARE = [
@@ -118,7 +118,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Auth
 # ---------------------------------------------------------------------------
 
-AUTH_USER_MODEL = "accounts.User"
+AUTH_USER_MODEL = "users.User"
 
 AUTHENTICATION_BACKENDS = [
     # Must come first: it wraps ModelBackend and blocks authentication
@@ -142,7 +142,7 @@ AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
         # display_name isn't a field on User (it lives on Profile) - see
-        # accounts/validation.py, which attaches it as a transient attribute
+        # users/validators.py, which attaches it as a transient attribute
         # before calling validate_password() so this still checks it.
         "OPTIONS": {"user_attributes": ["email", "display_name"]},
     },
@@ -155,7 +155,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # Shared by the built-in password-reset token and our own email-verification
-# token (accounts/tokens.py).
+# token (users/tokens.py).
 PASSWORD_RESET_TIMEOUT = 60 * 60  # 1 hour
 
 
@@ -208,25 +208,23 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
     ],
-    # Only the accounts.urls endpoints that explicitly set AllowAny are
-    # public; everything else defaults to requiring a session.
+    # Only the users.urls endpoints that explicitly set AllowAny are public;
+    # everything else requires a session.
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        # Per-IP (DRF's ScopedRateThrottle, keyed on the caller by default).
+        # Per IP (DRF's ScopedRateThrottle).
         "login": "5/min",
         "register": "5/min",
         "password_reset": "5/min",
         "resend_verification": "5/min",
-        # Per-submitted-email (accounts.throttling.AccountRateThrottle) -
-        # bounds how many emails one account can be sent/attempted against
-        # per window, independent of how many IPs the caller rotates
-        # through.
-        "login_account": "10/hour",
-        "register_account": "10/hour",
-        "password_reset_account": "5/hour",
-        "resend_verification_account": "5/hour",
+        # Per submitted email (users.throttling.EmailRateThrottle), however
+        # many IPs the caller rotates through.
+        "login_email": "10/hour",
+        "register_email": "10/hour",
+        "password_reset_email": "5/hour",
+        "resend_verification_email": "5/hour",
     },
 }
 

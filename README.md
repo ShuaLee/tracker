@@ -1,6 +1,17 @@
-# Portfolio Dashboard
+# Personal Wealth App
 
-See [PLAN.md](PLAN.md) for the full plan. Backend first: Django + DRF in `backend/`.
+Read [PRODUCT.md](PRODUCT.md) (what and why) and [PLAN.md](PLAN.md) (how and in what
+order) first. [LOG.md](LOG.md) records what has been done. Backend first: Django + DRF in
+`backend/`.
+
+## Apps (`backend/`)
+
+| App | Holds |
+|---|---|
+| `users` | `User` (email login), `Profile`, `Plan` / `Subscription` (tiers), `SecurityEvent`; the `/api/auth/` endpoints |
+| `portfolios` | `Portfolio` - one per user, created at signup, never shown in the UI |
+
+`backend/tests/test_dependency_rules.py` enforces which app may import which (PLAN.md 3).
 
 ## Setup (Windows, Python 3.12)
 
@@ -29,7 +40,7 @@ so the superuser and demo users have to be created on each machine.
 `manage.py seed_users` creates (or resets) one account per interesting state, all with
 password `TestPass123!` (override with `--password`). Refuses to run unless `DEBUG` is on.
 
-Each user gets their one portfolio automatically.
+Each user gets a profile, a portfolio and the Free plan automatically.
 
 | Email | State |
 |---|---|
@@ -79,7 +90,7 @@ Emails print in the `runserver` terminal in dev; paste their links into the brow
 ```powershell
 .venv\Scripts\python manage.py test          # everything, including the top-level
                                               # dependency-rule check in backend/tests/
-.venv\Scripts\python manage.py test accounts # just the accounts app
+.venv\Scripts\python manage.py test users    # just one app
 ```
 
 ## Dependencies

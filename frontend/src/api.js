@@ -133,18 +133,6 @@ export function confirmPasswordReset(uid, token, newPassword) {
   });
 }
 
-// --- portfolio (holdings) ----------------------------------------------------
-// Every user has exactly one portfolio, created at signup.
-
-export function listPortfolios() {
-  return apiFetch("/api/portfolios/");
-}
-
-// fields: { name?, base_currency? }
-export function updatePortfolio(id, fields) {
-  return apiFetch(`/api/portfolios/${id}/`, { method: "PATCH", body: fields });
-}
-
 // --- account ---------------------------------------------------------------
 
 export function updateProfile(profile) {
@@ -158,8 +146,9 @@ export function changeEmail(newEmail, currentPassword) {
   });
 }
 
-export function deactivateAccount(currentPassword) {
-  return apiFetch("/api/auth/deactivate/", {
+// Permanently deletes the account and everything it owns.
+export function deleteAccount(currentPassword) {
+  return apiFetch("/api/auth/delete-account/", {
     method: "POST",
     body: { current_password: currentPassword },
   });
