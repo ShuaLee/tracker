@@ -66,9 +66,20 @@ app names (`accounts`, `holdings`) no longer exist.)*
   migrations). Any machine with an old database must delete `backend/db.sqlite3` and
   `migrate` from scratch, then `createsuperuser` and optionally `seed_users`.
 - **Next action:** you enter your own holdings in admin (PLAN step 2's "done when") and
-  confirm step 2; then **step 3 - CSV import** (IBKR Open Positions + generic; review
-  new / changed / missing; apply). It will match rows by symbol within an account and
-  map a CSV `asset_type` column to `AssetType.key`.
+  confirm step 2; then **step 3 - CSV import** (PLAN 2.9: IBKR Open Positions + generic;
+  pick an account → upload → review new / changed / missing → apply; matched holdings
+  updated in place; each import kept as an `ImportBatch`). Built in admin.
+  - **Blocked on input from you:** your two IBKR exports (TFSA, FHSA) - or at least
+    their header row plus a couple of rows with fake numbers. IBKR's Open Positions
+    layout depends on how the report is set up, so the parser should be built against
+    the real file, not a guess.
+  - **Proposed defaults (2026-11-19, not yet confirmed):** the file's price becomes
+    `current_price` until live prices (step 9), with `price_updated_at` = import time;
+    "missing" holdings default to **keep** (removal must be ticked); new holdings' asset
+    type from IBKR's asset class (stocks/ETFs → `stocks`, bonds → `bonds`, crypto →
+    `crypto`) or the generic file's `asset_type` column (blank → `stocks`); match on
+    **symbol + currency** within the account, so a TSX and a US listing of the same
+    ticker stay separate holdings.
 
 ### Machine / environment notes
 
