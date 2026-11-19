@@ -60,6 +60,39 @@ class AccessTests(TestCase):
         self.assertFalse(accessible_portfolios(self.alice).exists())
 
 
+class AccountAndExchangeRateTests(TestCase):
+    def setUp(self):
+        from portfolios.models import Account, ExchangeRate
+
+        self.Account, self.ExchangeRate = Account, ExchangeRate
+        self.portfolio = make_user("owner@example.com").portfolios.get()
+
+    def test_account_names_unique_per_portfolio_only(self):
+        from django.db import IntegrityError, transaction
+
+        self.Account.objects.create(portfolio=self.portfolio, name="IBKR TFSA", kind="retirement")
+        self.Account.objects.create(portfolio=make_user("b@example.com").portfolios.get(), name="IBKR TFSA")
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            self.Account.objects.create(portfolio=self.portfolio, name="IBKR TFSA")
+
+    def test_rate_rules(self):
+        from decimal import Decimal
+
+        from django.db import IntegrityError, transaction
+
+        rate = self.ExchangeRate.objects.create(
+            portfolio=self.portfolio, from_currency="USD", to_currency="CAD", rate=Decimal("1.37")
+        )
+        self.assertEqual(str(rate), "1 USD = 1.37 CAD")
+        for fields in (
+            {"from_currency": "USD", "to_currency": "CAD", "rate": Decimal("1.4")},  # duplicate pair
+            {"from_currency": "CAD", "to_currency": "CAD", "rate": Decimal("1")},  # same currency
+            {"from_currency": "EUR", "to_currency": "CAD", "rate": Decimal("0")},  # not positive
+        ):
+            with self.assertRaises(IntegrityError), transaction.atomic():
+                self.ExchangeRate.objects.create(portfolio=self.portfolio, **fields)
+
+
 class AdminTests(TestCase):
     def test_list_and_change_pages_render_and_add_is_disabled(self):
         self.client.force_login(User.objects.create_superuser(email="admin@example.com", password=PASSWORD))

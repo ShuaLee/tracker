@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     # After users: its post_save receiver (creates the Profile) must run
     # before portfolios' (creates the portfolio in the profile's currency).
     "portfolios.apps.PortfoliosConfig",
+    "assets.apps.AssetsConfig",
 ]
 
 MIDDLEWARE = [

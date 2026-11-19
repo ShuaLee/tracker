@@ -9,7 +9,13 @@ order) first. [LOG.md](LOG.md) records what has been done. Backend first: Django
 | App | Holds |
 |---|---|
 | `users` | `User` (email login), `Profile`, `Plan` / `Subscription` (tiers), `SecurityEvent`; the `/api/auth/` endpoints |
-| `portfolios` | `Portfolio` - one per user, created at signup, never shown in the UI |
+| `portfolios` | `Portfolio` - one per user, created at signup, never shown in the UI; `Account` (where things are held); `ExchangeRate` (manual FX until step 9) |
+| `assets` | `AssetType` (standard + user-made), `AssetField` (custom fields), `Holding` (positions); `valuation.py` (value, cost, gain, totals) |
+
+Until the frontend step, data is entered in Django admin (`/admin/`). **Portfolio
+summaries** (under Assets) shows each portfolio's net worth, investments, personal,
+cost and gain, plus anything left out of the totals (unpriced holdings, missing
+exchange rates).
 
 `backend/tests/test_dependency_rules.py` enforces which app may import which (PLAN.md 3).
 
@@ -29,6 +35,7 @@ copy .env.example .env
 .venv\Scripts\python manage.py migrate
 .venv\Scripts\python manage.py createsuperuser
 .venv\Scripts\python manage.py seed_users   # optional demo users, see below
+.venv\Scripts\python manage.py seed_holdings  # optional: demo accounts + holdings for alice
 .venv\Scripts\python manage.py check
 ```
 

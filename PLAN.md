@@ -174,10 +174,11 @@ Showing FMP prices to paying users is redistribution. Personal FMP plans may not
 | | `Plan`, `Subscription` | entitlements (JSON); user, plan, status, renews_at |
 | `portfolios` | `Portfolio` | owner (one per user), name, base_currency |
 | | `Account` | portfolio, name, kind, institution |
-| `assets` | `AssetType` | portfolio (null = standard), name, icon, is_investment, is_priced |
-| | `AssetField` | asset_type, name, key, field_type, options |
-| | `Instrument` | symbol, exchange, name, currency, kind, last_price, last_price_at, yield (global) |
-| | `Holding` | portfolio, asset_type, account, instrument (nullable), name, symbol, quantity, avg_cost, current_price, price_updated_at, currency, yield_override, custom_fields (JSON), investment_override, notes |
+| | `ExchangeRate` | portfolio, from_currency, to_currency, rate — manual rates until `marketdata.FxRate` (step 9) |
+| `assets` | `AssetType` | portfolio (null = standard), key (standard types), name, icon, is_investment, is_priced |
+| | `AssetField` | portfolio, asset_type, name, key, field_type, options — `portfolio` so a user's fields on a *standard* type stay private |
+| | `Instrument` | symbol, exchange, name, currency, kind, last_price, last_price_at, yield (global) — **step 9** |
+| | `Holding` | portfolio, asset_type, account, instrument (nullable, step 9), name, symbol, quantity, avg_cost, current_price, price_updated_at, currency, yield_override (step 9), custom_fields (JSON), investment_override, notes |
 | `tags` | `TagGroup` | portfolio, name, sort_order |
 | | `Tag` | group, parent (nullable), name, color |
 | | `HoldingTag` | holding, tag (one per group per holding) |

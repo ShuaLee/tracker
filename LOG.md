@@ -40,8 +40,8 @@ app names (`accounts`, `holdings`) no longer exist.)*
   old v2 plan was replaced wholesale on 2026-11-18.
 - **Product:** individuals only (no advisors/clients/sharing), positions only (no
   transactions), one invisible portfolio per user, Free + paid plans.
-- **Current step:** **Step 1 (project + users) - built, awaiting your confirmation**
-  before step 2 (PRODUCT.md: confirm each step before the next).
+- **Current step:** **Step 2 (asset types, accounts, holdings) - built, awaiting your
+  confirmation** before step 3 (CSV import). Step 1 confirmed by the user 2026-11-18.
 - **What exists:**
   - `users` app (rebuilt from scratch, replaces `accounts`): email-login `User`,
     `Profile` (display name, base currency, timezone), `Plan` + `Subscription`
@@ -53,18 +53,22 @@ app names (`accounts`, `holdings`) no longer exist.)*
     axes lockout, single-use expiring tokens, secure cookies in prod, secrets in `.env`.
   - `portfolios` app (replaces `holdings`): `Portfolio` created at signup, base currency
     follows the profile, `portfolios.access.accessible_portfolios(user)` is the only access
-    check. **No portfolio API** - PLAN 2.1 says the UI never mentions portfolios.
+    check. **No portfolio API** - PLAN 2.1 says the UI never mentions portfolios. Step 2
+    added `Account` and `ExchangeRate` (manual FX pairs).
+  - `assets` app (step 2): `AssetType` (8 standard, seeded; plus user-made), `AssetField`
+    (text / number / date / choice), `Holding` (positions), `valuation.py` (pure
+    functions: value, cost, gain, `totals()`, `value_by()`), admin with custom-field
+    inputs and a read-only **Portfolio summaries** page. **Admin only, no API yet.**
   - `frontend/` test harness (unstyled, separate from step 10's real frontend): every
-    auth flow + settings.
-  - 83 tests; `check --deploy` clean against prod settings.
+    auth flow + settings. Nothing for holdings (no API).
+  - 122 tests; `check --deploy` clean against prod settings.
 - **Dev DB is per-machine** and was **reset** on 2026-11-18 (app rename = fresh
   migrations). Any machine with an old database must delete `backend/db.sqlite3` and
   `migrate` from scratch, then `createsuperuser` and optionally `seed_users`.
-- **Next action:** you confirm step 1; then **step 2** - asset types (standard seeded +
-  custom, with custom fields), accounts, holdings (quantity, avg cost, current price,
-  investment vs personal), base-currency totals with a manual FX rate. New apps per
-  PLAN 3: `Account` in `portfolios`; `assets` app for `AssetType` / `AssetField` /
-  `Instrument` / `Holding`. Calculations go in `valuation.py` as plain functions.
+- **Next action:** you enter your own holdings in admin (PLAN step 2's "done when") and
+  confirm step 2; then **step 3 - CSV import** (IBKR Open Positions + generic; review
+  new / changed / missing; apply). It will match rows by symbol within an account and
+  map a CSV `asset_type` column to `AssetType.key`.
 
 ### Machine / environment notes
 
@@ -527,3 +531,63 @@ Also: Pylance flagged `Import "django.conf" could not be resolved` - VS Code was
 using `backend\.venv` and didn't know `backend/` is the import root. Fixed with a local
 (gitignored) `.vscode/settings.json`; the settings are in the environment table above
 so the other machine can copy them.
+
+### 2026-11-18 — Step 2: asset types, accounts, holdings
+**Machine:** `Josh` (`C:\Users\Josh\Desktop\tracker`) · **Commit:** the commit that adds
+this entry (branch `accounts-complete-and-holdings`) - committed at the user's request
+**before** they confirmed step 2; confirmation (entering their own holdings) still pending.
+
+User confirmed step 1 and asked for step 2. Built with the defaults proposed beforehand
+(user didn't change them): **admin only, no API**; **`Instrument` and `yield_override`
+wait for step 9**; **manual FX in a per-portfolio table**; custom field types text /
+number / date / choice; account kinds brokerage / registered-retirement / bank / crypto /
+physical / other.
+
+- **`portfolios.Account`** (name unique per portfolio) and **`portfolios.ExchangeRate`**
+  (`1 from = rate to`, explicit pair, inverse derived, DB checks: pair unique, currencies
+  differ, rate > 0). Pairs rather than "rate to base" so a base-currency change needs no
+  rate edits (tested).
+- **`assets.AssetType`**: `portfolio` null = standard. 8 standard types seeded by
+  migration with stable `key`s (for CSV import): all investment except Vehicles; Stocks,
+  Bonds, Crypto marked `is_priced`. Real estate defaults to investment - override per
+  holding for a home you live in. Unique names per portfolio, and separately among
+  standard types (NULLs are distinct in a plain unique constraint).
+- **`assets.AssetField`** has a `portfolio` FK the plan's table didn't list - otherwise a
+  user's custom field on a *standard* type (e.g. Real estate → Address) would appear for
+  every user. PLAN.md §3 updated. `key` is slugified from the name once and never changes
+  (values in `Holding.custom_fields` are keyed by it); `normalize()` stores numbers as
+  decimal strings and dates as ISO strings - no floats in JSON.
+- **`assets.Holding`**: positions per PLAN 2.2. Blank currency → portfolio base on save.
+  `price_updated_at` is set automatically whenever `current_price` changes (via
+  `from_db` tracking; also handles `save(update_fields=...)`). DB check constraints keep
+  quantity / avg cost / price non-negative. `asset_type` is **RESTRICT** (not PROTECT):
+  a type in use can't be deleted on its own, but deleting a user/portfolio - custom types
+  and holdings together - works (PROTECT would block that cascade; tested).
+  `clean()` rejects another portfolio's type/account and validates custom fields against
+  the holding's type (empty values dropped, unknown keys rejected).
+- **`assets/valuation.py`** - plain functions, no DB except `portfolio_totals()`:
+  value / cost / gain per holding; `Rates.convert` (same, direct, inverse, else None);
+  `totals()` → net worth, investments, personal, cost basis, unrealized gain, plus
+  **`unpriced`** and **`missing_rates`**: such holdings are left out and reported, never
+  counted as zero or converted 1:1 (PRODUCT.md "numbers you can trust"). Cost basis
+  counts holdings with an avg cost; gain only those with both price and cost.
+  Full-precision Decimals; `money()` rounds only for display. `value_by()` groups by any
+  key (used for breakdowns now, widgets later).
+- **Admin**: holdings form shows the type's custom fields as real inputs once saved
+  (`get_form` strips the dynamic `custom__` names because the admin builds the form
+  class from fieldsets and would reject non-model fields); changing type drops old
+  custom values. **Portfolio summaries** (`assets.PortfolioSummary`, a proxy of
+  Portfolio, living in `assets` because `portfolios` may not import `assets`) shows
+  totals, by-type and by-account breakdowns and what was left out. Portfolio admin has
+  account and exchange-rate inlines.
+- **`seed_holdings`** dev command: alice gets 3 accounts, USD→CAD 1.37 and 7 holdings
+  (USD + CAD stocks, one without avg cost, gold, cash, a car, a "Watches" custom type
+  with Brand/Reference/Condition). Hand-calculated totals, asserted in a test: net worth
+  **115,871.00 CAD**, investments 74,371.00, personal 41,500.00, cost basis 73,499.00,
+  gain −683.10. Seeded into this machine's dev DB.
+
+122 tests pass (39 new); migrations clean; `check` clean.
+
+User asked how asset types work (explained: standard vs user-made, what a type
+controls, the rules above, admin-only for now, and types = *what it is* vs step 4's
+tags = *how you classify it*). No design change came out of it.
